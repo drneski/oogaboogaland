@@ -5075,17 +5075,14 @@ const hubRoutes = { name: "hub routes", why: "playthrough: every scene the islan
 const hubFall = { name: "hub fall", why: "rule: abyss falls return players and NPCs to varied clear ground around the banana pile, preserving possession", run: async (b) => {
   await b.evaluate(`(() => { const B = window.__ooga, a = B.cavemen.get("portlandhodl"), I = B.island, ang = Math.PI / 4; if (B.crew.player !== a) B.pilot.possess(a); let r = 5; while (I.onLand(Math.sin(ang) * r, Math.cos(ang) * r)) r += 0.25; r -= 1.5; const x = Math.sin(ang) * r, z = Math.cos(ang) * r; B.pilot.navigate({ position: { x, y: I.surfaceAt(x, z), z }, yaw: ang + Math.PI, pitch: 0.4, dist: 10 }); B.advance(0.5, 1 / 60); })()`);
   await b.send("Input.dispatchKeyEvent", { type: "keyDown", key: "w", text: "w", code: "KeyW" });
-  const r = await b.evaluate(`(() => { const B = window.__ooga, a = B.cavemen.get("portlandhodl"), p = a.root.position; let minFeet = Infinity, back = null; for (let i = 0; i < 20 * 30; i++) { B.advance(1 / 30, 1 / 30); minFeet = Math.min(minFeet, p.y - a.baseY); if (minFeet < -50 && Math.hypot(p.x, p.z) < 12) { back = i / 30; break; } } return { minFeet: +minFeet.toFixed(1), back, onLand: B.island.onLand(p.x, p.z), yours: B.crew.player === a }; })()`);
-  await b.send("Input.dispatchKeyEvent", { type: "keyUp", key: "w", code: "KeyW" });
   const respawns = await b.evaluate(`(() => {
     const B = __ooga, a = B.cavemen.get("portlandhodl"), solids = B.headquarters.solids.props;
-    const available = c => c !== a && c.root.visible && !c.health.stunned && !c.grabbedBy && !c.bedTravel.mode
-      && !c.camp.seat && !c.camp.burning && !c.camp.rolling && !c.puppet && !c.remoteControlled
-      && c.traits.name !== "SaniExp" && (c.state === "working" || c.state === "chilling");
-    const npc = B.crew.list.find(c => available(c) && c.slot) || B.crew.list.find(available);
+    const available = c => c && c !== a && !c.humanControlled && !c.health.stunned && !c.grabbedBy
+      && !c.camp.seat && !c.camp.burning && !c.camp.rolling && !c.camp.panic.active && !c.puppet && !c.remoteControlled;
+    const npc = [B.cavemen.get("MrHodlX"), B.cavemen.get("hotpixelgroup")].find(available);
     if (!npc) return { setup: false, rows: [] };
     const inner = Math.max(5, B.altar.platformRadius + 1.3), outer = inner + 3, rows = [];
-    const override = npc.override, state = npc.state, slot = npc.slot;
+    const override = npc.override;
     const sample = c => {
       const p = c.root.position, feet = p.y - c.baseY;
       let gap = Infinity;
@@ -5101,9 +5098,25 @@ const hubFall = { name: "hub fall", why: "rule: abyss falls return players and N
         yours: B.crew.player === a && B.pilot.player === a && a.humanControlled,
         npcUndriven: B.crew.player !== npc && B.pilot.player !== npc && !npc.humanControlled };
     };
+    const p = a.root.position;
+    let minFeet = Infinity, back = null;
+    for (let i = 0; i < 20 * 30; i++) {
+      B.advance(1 / 30, 1 / 30); minFeet = Math.min(minFeet, p.y - a.baseY);
+      if (minFeet < -50 && Math.hypot(p.x, p.z) < 12) { back = i / 30; break; }
+    }
+    const fall = { minFeet: +minFeet.toFixed(1), back, onLand: B.island.onLand(p.x, p.z), yours: B.crew.player === a };
+    // Sample the arrival in the same frame, before Chrome resumes animation
+    // with W still held between DevTools calls and walks away from that spot.
     const natural = sample(a);
     B.pilot.controls.reset();
     try {
+      // Activity ages against the real date; this session can have no awake
+      // NPCs. Use the native state transition to wake one named worker,
+      // leave its bed, and assign a real slot independently of that clock.
+      npc.override = "working"; npc.state = "away"; B.crew.refreshStates(true);
+      const state = npc.state, slot = npc.slot;
+      if (state !== "working" || !npc.root.visible || npc.bedTravel.mode || !slot)
+        return { setup: false, npc: npc.traits.name, state, visible: npc.root.visible, bed: npc.bedTravel.mode, hadSlot: !!slot, rows };
       // The first fall above uses real keys. Repeated arrivals start below
       // the abyss threshold and run the same update/respawn controllers.
       // Keep any real work slot: it must not override the pile destination.
@@ -5127,11 +5140,15 @@ const hubFall = { name: "hub fall", why: "rule: abyss falls return players and N
         rows.push({ mode, hadSlot: !!slot, landings,
           varied: Math.hypot(landings[1].x - landings[0].x, landings[1].z - landings[0].z) > 1e-4 });
       }
-      return { setup: true, inner, outer, natural, rows };
+      return { setup: true, inner, outer, fall, natural, rows };
     } finally {
-      npc.override = override; npc.state = state; B.crew.refreshStates(true);
+      // Force the matching native transition again; assigning the former
+      // sleeping state alone would leave the fixture's bed route attached.
+      npc.override = override; npc.state = "away"; B.crew.refreshStates(true);
     }
   })()`);
+  await b.send("Input.dispatchKeyEvent", { type: "keyUp", key: "w", code: "KeyW" });
+  const r = respawns.fall || {};
   const landed = p => p.onLand && p.radius >= respawns.inner - 1e-7 && p.radius <= respawns.outer + 1e-7
     && Math.abs(p.feet) < .025 && p.surface === 0 && p.clear && p.gap >= -1e-7 && p.yours && p.npcUndriven;
   record("hub fall: an Ooga walked off the edge falls into the abyss and is back at the pile within six seconds, still yours", r.minFeet < -50 && r.back !== null && r.back < 6 && r.onLand && r.yours
@@ -7972,23 +7989,34 @@ scene("hub", { label: "lab flask approach", query: "solo=1&character=portlandhod
   const state = await b.evaluate(`(() => {
     const B = __ooga, C = B.clankers, e = C.list[0], owner = e.owner, m = B.headquarters.entropyLab.mouth;
     const site = B.crew.workSites.findIndex(site => site.mouth === m), sx = Math.sin(m.ry), sz = Math.cos(m.ry);
+    const nextSite = B.crew.workSites.findIndex((workSite, index) => index !== site && workSite.mouth);
     B.pilot.release(true); C.release(); C.cancelDebugMove(e);
     owner.override = owner.state = "working"; owner.work.site = owner.work.plannedSite = site;
     owner.camp.burning = false;
     Object.assign(owner.root.position, { x: m.x - sx * 0.45, y: m.floorY + owner.baseY, z: m.z - sz * 0.45 });
     const walkOut = visible => {
+      // Return any real held equipment and clear the previous trial's motion
+      // through the lifecycle before putting the same walker in the doorway.
+      owner.work.site = owner.work.plannedSite = site;
+      C.respawn(e);
       owner.root.visible = visible;
       Object.assign(e.root.position, { x: m.x - sx * 1.6, y: m.floorY, z: m.z - sz * 1.6 });
-      Object.assign(e, { active: true, controlled: false, mode: "working", phase: "leave", site, fromSite: site,
-        pendingSite: -1, route: "exit", parked: false, lounge: "", loungeDepart: false, rest: 0, recover: 0,
+      Object.assign(e, { active: true, controlled: false, mode: "working", phase: "work", site, fromSite: site,
+        pendingSite: -1, route: "", parked: false, lounge: "", loungeDepart: false, rest: 0, recover: 0,
         pound: 0, beat: 0, stand: 0, speed: 0, heading: m.ry, hasSlot: false, slotIndex: -1, blocked: 0, retry: 0,
         exitFootprint: false, backoutLeft: 0 });
       e.root.visible = true;
       e.jump.active = e.climb.active = e.drive.airborne = e.drive.resume = e.fire.burning = e.fire.rolling = false;
       Object.assign(e.lab, { item: -1, stage: "", reach: 0, arrived: false, yielding: 0, pathCount: 0, pathIndex: 0,
         pathAt: 0, pathPending: false, pathPartial: false, targetX: NaN, targetZ: NaN });
-      Object.assign(e.motion, { lab: true, labRunIn: false, labWork: "", labReach: 0, labBench: null, labPhase: 0, supportOffset: 0 });
+      Object.assign(e.motion, { lab: true, labRunIn: false, labWork: "", labReach: 0, labBench: null, labPhase: 0, supportOffset: 0, walkPhase: 0 });
       e.stuck.time = e.stuck.taskTime = 0; e.stuck.taskActive = false; e.stuck.x = NaN;
+      // A working gorilla leaves through plan(), which also cancels its work
+      // gesture. Forging phase "leave" bypasses that ordinary handoff.
+      owner.work.plannedSite = nextSite; C.plan(owner, nextSite);
+      const planned = e.phase === "travel" && e.route === "exit" && e.fromSite === site && e.site === nextSite
+        && e.lab.item < 0 && !e.gorilla.labItem;
+      e.motion.workExit = planned;
       e.gorilla.poseManaged(2, e.root.position.x, e.root.position.y, e.root.position.z, e.heading, 0, false, true, "", e.motion);
       BL.scene.updateWorld(BL.scenes.hub.root);
       const trace = [], recoveries = e.stuck.recoveries;
@@ -7996,17 +8024,19 @@ scene("hub", { label: "lab flask approach", query: "solo=1&character=portlandhod
         C.update(1 / 60);
         const p = e.root.position, along = (p.x - m.x) * sx + (p.z - m.z) * sz;
         trace.push([p.x, p.y, p.z]);
-        if (along > 1.5) return { exited: true, trace, recoveries: e.stuck.recoveries - recoveries };
+        if (along > 1.5) return { planned, exited: true, trace, recoveries: e.stuck.recoveries - recoveries };
       }
-      return { exited: false, trace, recoveries: e.stuck.recoveries - recoveries };
+      return { planned, exited: false, trace, recoveries: e.stuck.recoveries - recoveries,
+        stalled: { position: { ...e.root.position }, phase: e.phase, route: e.route, blocked: e.blocked,
+          held: !!e.gorilla.labItem, compact: e.gorilla.labWalkCompact, goal: [e.goalX, e.goalY, e.goalZ] } };
     };
     const empty = walkOut(false), occupied = walkOut(true);
-    return { emptyExit: empty.exited, occupiedExit: occupied.exited, frames: occupied.trace.length,
+    return { planned: empty.planned && occupied.planned, emptyExit: empty.exited, occupiedExit: occupied.exited, frames: occupied.trace.length,
       samePath: empty.trace.length === occupied.trace.length && empty.trace.every((p, i) => p.every((value, axis) => Math.abs(value - occupied.trace[i][axis]) < 1e-6)),
-      recoveries: empty.recoveries + occupied.recoveries };
+      recoveries: empty.recoveries + occupied.recoveries, emptyStall: empty.stalled, occupiedStall: occupied.stalled };
   })()`);
   record("gorilla lab exit: an Ooga standing in the doorway leaves the departure path, height and timing unchanged",
-    state.emptyExit && state.occupiedExit && state.samePath && !state.recoveries, JSON.stringify(state));
+    state.planned && state.emptyExit && state.occupiedExit && state.samePath && !state.recoveries, JSON.stringify(state));
 } }, { name: "lab flask approach", why: "regression: the flask pickup used an inspection pose and stale bench settings, and returning a held flask delayed the next-cave handoff", run: async (b) => {
   const state = await b.evaluate(`(() => {
     const B = __ooga, C = B.clankers, e = C.list[0], lab = B.headquarters.entropyLab;
