@@ -12,7 +12,7 @@
     geometry = geometry.collisionGeometry || geometry;
     let cached = geometries.get(geometry);
     if (cached) return cached;
-    const vertices = geometry.verts, triangles = [], bounds = [], order = [], gorillaStep = [], supportOnly = [];
+    const vertices = geometry.verts, triangles = [], bounds = [], order = [], gorillaStep = [], supportOnly = [], ragePass = [];
     for (const face of geometry.faces) for (let i = 1; i + 1 < face.i.length; i++) {
       const a = face.i[0] * 3, b = face.i[i] * 3, c = face.i[i + 1] * 3;
       const ux = vertices[b] - vertices[a], uy = vertices[b + 1] - vertices[a + 1], uz = vertices[b + 2] - vertices[a + 2];
@@ -21,6 +21,7 @@
       order.push(order.length);
       gorillaStep.push(face.gorillaStep ? 1 : 0);
       supportOnly.push(face.supportOnly ? 1 : 0);
+      ragePass.push(face.ragePass ? 1 : 0);
       triangles.push(a, b, c);
       bounds.push(Math.min(vertices[a], vertices[b], vertices[c]), Math.min(vertices[a + 1], vertices[b + 1], vertices[c + 1]), Math.min(vertices[a + 2], vertices[b + 2], vertices[c + 2]),
         Math.max(vertices[a], vertices[b], vertices[c]), Math.max(vertices[a + 1], vertices[b + 1], vertices[c + 1]), Math.max(vertices[a + 2], vertices[b + 2], vertices[c + 2]));
@@ -46,7 +47,7 @@
       return index;
     };
     if (order.length) build(0, order.length);
-    cached = { vertices, triangles: new Uint32Array(triangles), order: new Uint32Array(order), gorillaStep: Uint8Array.from(gorillaStep), supportOnly: Uint8Array.from(supportOnly), nodes };
+    cached = { vertices, triangles: new Uint32Array(triangles), order: new Uint32Array(order), gorillaStep: Uint8Array.from(gorillaStep), supportOnly: Uint8Array.from(supportOnly), ragePass: Uint8Array.from(ragePass), nodes };
     geometries.set(geometry, cached);
     return cached;
   };
@@ -88,7 +89,10 @@
       return false;
     };
     const add = (root, shoulderOnly = false) => {
-      const visit = (node) => {
+      // Whole decorative trees can tag their root before registration; merged
+      // scenery instead tags only the decorative faces in its geometry.
+      const visit = (node, inheritedRagePass) => {
+        const ragePass = inheritedRagePass || !!node.ragePass;
         if (node.geometry && node.geometry.faces.length && !node.instanceData && !registered.has(node)) {
           const geometry = geometryOf(node.geometry);
           if (geometry.nodes.length) {
@@ -99,14 +103,16 @@
               shoulderSeen = new Uint8Array(count); shoulderQueue = new Int32Array(count);
             }
             const entry = { node, geometry, world: mat4.create(), inverse: mat4.create(), inverseStale: true, box: new Float64Array(6), span: new Int32Array(4), active: false, initialized: false, orientation: 1, shoulderOnly,
-              gorillaSteps: node.gorillaSteps || node.geometry.gorillaSteps, gorillaStepAll: !!node.gorillaStepAll };
+              gorillaSteps: node.gorillaSteps || node.geometry.gorillaSteps, gorillaStepAll: !!node.gorillaStepAll, ragePass };
             entries.push(entry); registered.set(node, entry); gridDirty = true;
             stats.triangles += geometry.triangles.length / 3;
           }
         }
-        for (const child of node.children) visit(child);
+        for (const child of node.children) visit(child, ragePass);
       };
-      visit(root); stats.nodes = entries.length;
+      let inheritedRagePass = false;
+      for (let at = root.parent; at; at = at.parent) inheritedRagePass = inheritedRagePass || !!at.ragePass;
+      visit(root, inheritedRagePass); stats.nodes = entries.length;
     };
     const remove = (root) => {
       for (let i = entries.length - 1; i >= 0; i--) if (belongs(entries[i].node, root)) {
@@ -268,14 +274,14 @@
       }
       return top;
     };
-    const surfaceAt = (x, z, y, maxStep, radius, ignore, direction, out = null, skipGorillaSteps = false, accept = null) => {
+    const surfaceAt = (x, z, y, maxStep, radius, ignore, direction, out = null, skipGorillaSteps = false, accept = null, skipRageProps = false) => {
       stats.queries++;
       if (out) out.node = null;
       let best = -Infinity;
       const limit = y * direction + maxStep;
       for (let c = 0, count = gather(x - radius, z - radius, x + radius, z + radius); c < count; c++) {
         const entry = entries[candidates[c]], box = entry.box;
-        if (!entry.active || entry.shoulderOnly || skipGorillaSteps && entry.gorillaStepAll
+        if (!entry.active || entry.shoulderOnly || skipGorillaSteps && entry.gorillaStepAll || skipRageProps && entry.ragePass
           || box[0] > x + radius || box[3] < x - radius || box[2] > z + radius || box[5] < z - radius || ignore && belongs(entry.node, ignore)
           || accept && !accept(entry.node, y)) continue;
         const low = direction > 0 ? box[1] : Math.max(box[1], y - maxStep), high = direction > 0 ? Math.min(box[4], y + maxStep) : box[4];
@@ -288,7 +294,8 @@
           if (node.left >= 0) { stack[size++] = node.left; stack[size++] = node.right; continue; }
           for (let i = node.from; i < node.to; i++) {
             const index = entry.geometry.order[i];
-            if (direction < 0 && entry.geometry.supportOnly[index] || skipGorillaSteps && entry.geometry.gorillaStep[index]) continue;
+            if (direction < 0 && entry.geometry.supportOnly[index] || skipGorillaSteps && entry.geometry.gorillaStep[index]
+              || skipRageProps && entry.geometry.ragePass[index]) continue;
             transformTriangle(entry, index);
             const ny = ((triangle[5] - triangle[2]) * (triangle[6] - triangle[0]) - (triangle[3] - triangle[0]) * (triangle[8] - triangle[2])) * entry.orientation;
             if (ny * direction <= 1e-10) continue;
@@ -304,7 +311,7 @@
     };
     // A half-open edge convention counts shared diagonals only once; signed crossings also handle overlapping
     // closed parts of a merged model.
-    const inside = (entry, x, y, z, skipGorillaSteps = false) => {
+    const inside = (entry, x, y, z, skipGorillaSteps = false, skipRageProps = false) => {
       if (!overlaps(entry.box, x, y, z, x, y, z)) return false;
       localQuery(entry, x, y, z, x, entry.box[4] + EPS, z);
       let winding = 0, size = 1; stack[0] = 0;
@@ -314,7 +321,8 @@
         if (node.left >= 0) { stack[size++] = node.left; stack[size++] = node.right; continue; }
         for (let i = node.from; i < node.to; i++) {
           const index = entry.geometry.order[i];
-          if (entry.geometry.supportOnly[index] || skipGorillaSteps && entry.geometry.gorillaStep[index]) continue;
+          if (entry.geometry.supportOnly[index] || skipGorillaSteps && entry.geometry.gorillaStep[index]
+            || skipRageProps && entry.geometry.ragePass[index]) continue;
           transformTriangle(entry, index);
           const determinant = (triangle[3] - triangle[0]) * (triangle[8] - triangle[2]) - (triangle[5] - triangle[2]) * (triangle[6] - triangle[0]);
           if (Math.abs(determinant) < 1e-12) continue;
@@ -332,7 +340,7 @@
       }
       return winding > 0;
     };
-    const segmentClear = (x, y, z, toX, toY, toZ, radius, height, ignore = null, toRadius = radius, toHeight = height, skipGorillaSteps = false, skipClimbMasonry = false, escape = false) => {
+    const segmentClear = (x, y, z, toX, toY, toZ, radius, height, ignore = null, toRadius = radius, toHeight = height, skipGorillaSteps = false, skipClimbMasonry = false, escape = false, skipRageProps = false) => {
       stats.queries++;
       escape = escape && y === toY && radius === toRadius && height === toHeight && (x !== toX || z !== toZ);
       const x0 = Math.min(x - radius, toX - toRadius), x1 = Math.max(x + radius, toX + toRadius), y0 = Math.min(y, toY), y1 = Math.max(y + height, toY + toHeight),
@@ -340,10 +348,10 @@
       for (let c = 0, count = gather(x0, z0, x1, z1); c < count; c++) {
         const entry = entries[candidates[c]];
         if (!entry.active || entry.shoulderOnly || skipClimbMasonry && entry.node.climbMasonry
-          || skipGorillaSteps && entry.gorillaStepAll
+          || skipGorillaSteps && entry.gorillaStepAll || skipRageProps && entry.ragePass
           || !overlaps(entry.box, x0, y0, z0, x1, y1, z1) || ignore && belongs(entry.node, ignore)) continue;
-        if (inside(entry, x, y + height / 2, z, skipGorillaSteps)
-          || inside(entry, toX, toY + toHeight / 2, toZ, skipGorillaSteps)) return false;
+        if (inside(entry, x, y + height / 2, z, skipGorillaSteps, skipRageProps)
+          || inside(entry, toX, toY + toHeight / 2, toZ, skipGorillaSteps, skipRageProps)) return false;
         localQuery(entry, x0, y0, z0, x1, y1, z1);
         let size = 1; stack[0] = 0;
         while (size) {
@@ -352,7 +360,8 @@
           if (node.left >= 0) { stack[size++] = node.left; stack[size++] = node.right; continue; }
           for (let i = node.from; i < node.to; i++) {
             const index = entry.geometry.order[i];
-            if (entry.geometry.supportOnly[index] || skipGorillaSteps && entry.geometry.gorillaStep[index]) continue;
+            if (entry.geometry.supportOnly[index] || skipGorillaSteps && entry.geometry.gorillaStep[index]
+              || skipRageProps && entry.geometry.ragePass[index]) continue;
             transformTriangle(entry, index);
             if (Math.max(triangle[1], triangle[4], triangle[7]) <= y0 + EPS || Math.min(triangle[1], triangle[4], triangle[7]) >= y1 - EPS) continue;
             if (!BL.convex.sweptCylinder(triangle, x, y, z, toX, toY, toZ, radius, height, toRadius, toHeight)) continue;
@@ -526,7 +535,7 @@
     };
     // shoulderAt: y/height are the blocking slice above a walker's climbable step; out is the first connected
     // surface in forward/right frame; bottomY adds lower tiers only after contact; contactAcross keeps that slice.
-    const shoulderAt = (x, y, z, fx, fz, radius, height, reach, out, bottomY = y) => {
+    const shoulderAt = (x, y, z, fx, fz, radius, height, reach, out, bottomY = y, skipRageProps = false) => {
       stats.queries++;
       out.node = null;
       if (height <= EPS) return false;
@@ -535,7 +544,7 @@
       let best = reach + EPS;
       for (let c = 0, candidateCount = gather(x0, z0, x1, z1); c < candidateCount; c++) {
         const entry = entries[candidates[c]];
-        if (!entry.active || !overlaps(entry.box, x0, bottomY, z0, x1, y + height, z1)) continue;
+        if (!entry.active || skipRageProps && entry.ragePass || !overlaps(entry.box, x0, bottomY, z0, x1, y + height, z1)) continue;
         localQuery(entry, x0, bottomY, z0, x1, y + height, z1);
         let size = 1, count = 0, nearest = -1; stack[0] = 0;
         while (size) {
@@ -544,7 +553,7 @@
           if (node.left >= 0) { stack[size++] = node.left; stack[size++] = node.right; continue; }
           for (let i = node.from; i < node.to; i++) {
             const index = entry.geometry.order[i];
-            if (entry.geometry.supportOnly[index]) continue;
+            if (entry.geometry.supportOnly[index] || skipRageProps && entry.geometry.ragePass[index]) continue;
             transformTriangle(entry, index);
             const top = Math.max(triangle[1], triangle[4], triangle[7]);
             if (top <= bottomY + EPS || Math.min(triangle[1], triangle[4], triangle[7]) >= y + height - EPS) continue;
@@ -592,8 +601,8 @@
         segmentClear(x, y, z, toX, toY, toZ, radius, height, ignore, radius, height, false, false, true),
       isActive: (node) => !!registered.get(node)?.active,
       clearAt: (x, y, z, radius, height, ignore = null) => segmentClear(x, y, z, x, y, z, radius, height, ignore),
-      supportAt: (x, z, y, maxStep = 0, radius = 0, ignore = null, out = null, skipGorillaSteps = false, accept = null) => surfaceAt(x, z, y, maxStep, radius, ignore, 1, out, skipGorillaSteps, accept),
-      ceilingAt: (x, z, y, radius = 0, ignore = null) => surfaceAt(x, z, y, 0, radius, ignore, -1),
+      supportAt: (x, z, y, maxStep = 0, radius = 0, ignore = null, out = null, skipGorillaSteps = false, accept = null, skipRageProps = false) => surfaceAt(x, z, y, maxStep, radius, ignore, 1, out, skipGorillaSteps, accept, skipRageProps),
+      ceilingAt: (x, z, y, radius = 0, ignore = null, skipGorillaSteps = false, skipRageProps = false) => surfaceAt(x, z, y, 0, radius, ignore, -1, null, skipGorillaSteps, null, skipRageProps),
       dispose() { entries.length = 0; registered.clear(); gridDirty = true; stats.nodes = stats.active = stats.transforms = stats.triangles = 0; }
     };
   };

@@ -29,6 +29,10 @@
   // arms, cloth, frames: no collision), `glow` (bolts and ore glints) and `lampGlow` (lantern glass).
   const U = 1 / 16;
   const SOLID = 0, HANG = 1, GLOW = 2, LAMP_GLOW = 3;
+  // Keep decorative uprights distinct inside a merged solid. Structures,
+  // workbenches and short stepping props retain their ordinary collision.
+  const RAGE_PASS = 64;
+  const RAGE_PASS_PIECES = new Set(["lanternPost", "banner", "chalkboard", "monolith", "coil", "gauge"]);
   const PALETTE = [
     "#8a5a32", "#a8703e", "#5c3a1e", "#43291a", // 0 wood, 1 wood light, 2 wood dark, 3 plank gap
     "#4a4d52", "#2c2e33", "#6f737a", // 4 iron, 5 iron dark, 6 iron light
@@ -411,13 +415,16 @@
       lights.push((ox + x) * U, (oy + p[1]) * U, (oz + z) * U, kind === "coil" ? 4 : variant);
     };
     // Later pieces overwrite earlier voxels in the same cell; the hang layer never overwrites a solid one.
-    const write = (layer, x, y, z, c) => {
+    const write = (layer, x, y, z, c, ragePass = false) => {
       const k = KEY(x, y, z);
       if (layer !== SOLID && layers[SOLID].has(k)) return;
-      layers[layer].set(k, c);
+      // The palette fits below this bit. Carry it through run merging so a
+      // decorative face never absorbs an adjacent structural face's tag.
+      layers[layer].set(k, c | (layer === SOLID && ragePass ? RAGE_PASS : 0));
     };
     const put = (kind, x, y, z, turns = 0, variant = 0) => {
       const piece = pieceOf(kind, variant), mesh = MESHES[kind];
+      const ragePass = RAGE_PASS_PIECES.has(kind);
       const ox = Math.round(x / U), oy = Math.round(y / U), oz = Math.round(z / U), q = ((turns % 4) + 4) % 4;
       const step = boundsForStep(kind, variant);
       if (step) {
@@ -436,7 +443,7 @@
           if (mesh && (!mesh.keep || !mesh.keep(layer, lx, list[i + 1], lz))) continue;
           const rx = q === 0 ? lx : q === 1 ? lz : q === 2 ? -lx - 1 : -lz - 1;
           const rz = q === 0 ? lz : q === 1 ? -lx - 1 : q === 2 ? -lz - 1 : lx;
-          write(layer === LAMP_GLOW ? 5 : layer, ox + rx, oy + list[i + 1], oz + rz, list[i + 3]);
+          write(layer === LAMP_GLOW ? 5 : layer, ox + rx, oy + list[i + 1], oz + rz, list[i + 3], ragePass);
         }
       }
       light(kind, ox, oy, oz, q, variant);
@@ -479,14 +486,26 @@
       const map = layers[layer];
       if (!map.size) return null;
       const geo = { verts: [], faces: [], lines: [], voxel: new Float32Array([U, 0, 0, 0]) };
-      const has = (x, y, z) => map.has(KEY(x, y, z));
+      // Keep both shells closed where decorative and structural cells touch;
+      // filtering one must not leave a hole in the other one's collision.
+      let collisionTag = 0;
+      const has = (x, y, z) => {
+        const cell = map.get(KEY(x, y, z));
+        return cell !== undefined && (cell & RAGE_PASS) === collisionTag;
+      };
       const emit = (pts, c) => {
         const b = geo.verts.length / 3;
         for (const [x, y, z] of pts) geo.verts.push(x * U, y * U, z * U);
-        geo.faces.push({ i: [b, b + 1, b + 2, b + 3], color: RGB[c], emissive: layer === GLOW || layer === 4 || layer >= 5 ? EMISSIVE[c] || 0 : 0 });
+        const ragePass = !!(c & RAGE_PASS); c &= RAGE_PASS - 1;
+        const face = { i: [b, b + 1, b + 2, b + 3], color: RGB[c], emissive: layer === GLOW || layer === 4 || layer >= 5 ? EMISSIVE[c] || 0 : 0 };
+        if (ragePass) face.ragePass = true;
+        geo.faces.push(face);
       };
       voxelFaces((fn) => {
-        for (const [k, c] of map) fn(Math.floor(k / 16777216) - 2048, Math.floor(k / 4096) % 4096 - 2048, k % 4096 - 2048, c);
+        for (const [k, c] of map) {
+          collisionTag = c & RAGE_PASS;
+          fn(Math.floor(k / 16777216) - 2048, Math.floor(k / 4096) % 4096 - 2048, k % 4096 - 2048, c);
+        }
       }, has, emit);
       if (layer === 3 || layer === 4 || layer === 6) geo.swing = 1;
       return layer === GLOW || layer === 4 || layer >= 5 ? noShadow(geo) : geo;
