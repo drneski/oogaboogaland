@@ -484,6 +484,7 @@
       climb: 0, climbBlend: 0, climbPose: NaN, climbStride: 0, climbDirection: 0, climbSide: 0,
       climbArmBaseL: 0, climbArmBaseR: 0, climbFitArms: 0,
       climbGripX: NaN, climbGripY: NaN, climbGripZ: NaN, climbGripRelease: 0,
+      walkLegLiftR: 0, walkLegLiftL: 0,
       groom: 0, groomBlend: 0, groomSide: 1, groomTime: 0, sitLook: 0, sitShift: 0,
       lab: false, labRunIn: false, coatSplit: false, labWork: "", labPhase: 0, labSide: 1, labReach: 0, labReachGrip: geos.labFlask.labGripY, labPreviewItem: false, labSqueeze: false, labDie: false, labRoll: 0,
       labPalmLift: 0, labBench: null, labTouchArm: false, labTouchSide: 1,
@@ -761,6 +762,10 @@
         // pose; narrow gaps can let the arms pass through scenery instead.
         const climbStroke = wave(climbPhase, l.side < 0 ? 0 : 0.5), leg = parts[l.leg];
         if (managed) {
+          // Contact fitting is a correction to this frame's pose. Feeding the
+          // previous lift into damping accumulates it while a wall stays near.
+          leg.position.y -= l.side < 0 ? state.walkLegLiftR : state.walkLegLiftL;
+          if (l.side < 0) state.walkLegLiftR = 0; else state.walkLegLiftL = 0;
           // Ordinary lab steps leave room between the coat and forearms.
           arm.position.x = damp(arm.position.x, l.side * ((laboratory ? 0.66 : squeeze ? 0.4 : SHOULDER_X) * (1 - climbing) + 0.38 * climbing), 12, dt);
           // Counter the torso's tilt during each lift so the hands and toes
@@ -1177,13 +1182,13 @@
       const walkPhase = motion ? motion.walkPhase : NaN;
       if (Number.isFinite(walkPhase) && state.walkPhase !== walkPhase) state.phase = walkPhase;
       state.walkPhase = walkPhase;
-      const lab = !!(motion && motion.lab);
+      const lab = !!(motion && motion.lab && !motion.rage);
       let coatSplit = false;
       if (coatClip) {
         const dx = px - coatClip.mouth.x, dz = pz - coatClip.mouth.z;
         const along = dx * coatClip.sr + dz * coatClip.cr - 0.5;
         const across = dx * coatClip.cr - dz * coatClip.sr;
-        coatSplit = !(motion && (motion.climb > 0 || motion.openingSettle > 0))
+        coatSplit = !(motion && (motion.rage || motion.climb > 0 || motion.openingSettle > 0))
           && Math.abs(along) < coatClip.reach && Math.abs(across) < 2.5
           && py > coatClip.mouth.floorY - 0.5 && py < coatClip.mouth.floorY + 1.5;
       }
@@ -1359,7 +1364,10 @@
       mat4.multiply(envelopeChest, hips.local, chest.local);
       for (let side = 0; side < 2; side++) {
         const leg = side ? parts.legL : parts.legR;
+        const y = leg.position.y;
         for (let step = 0; step < 15 && !climbPartClear(leg); step++) leg.position.y += 0.02;
+        if (side) state.walkLegLiftL = leg.position.y - y;
+        else state.walkLegLiftR = leg.position.y - y;
       }
       for (let side = 0; side < 2; side++) {
         if (state.dragging && side === 1) continue;
@@ -1616,7 +1624,7 @@
     };
     // The optional starting rest pose proves a future seat can also be left.
     // Both temporary poses share the snapshot, leaving the live rig untouched.
-    const climbPoseClear = (dt, px, py, pz, facing, motion, solidAt, clearAt = null, entry = null, speed = 0, staticPose = false, lounge = "", fromLounge = null, sequenceStep = 0, hullAt = null, fromWalk = null, supportAt = null, biped = false) => {
+    const climbPoseClear = (dt, px, py, pz, facing, motion, solidAt, clearAt = null, entry = null, speed = 0, staticPose = false, lounge = "", fromLounge = null, sequenceStep = 0, hullAt = null, fromWalk = null, supportAt = null, biped = false, airborne = false) => {
       climbBlockedArm = climbContactMask = 0;
       if (!managed || !solidAt) return true;
       const emptySolid = solidAt.emptySolid === true;
@@ -1629,7 +1637,7 @@
         previewGeometries[i] = n.geometry; previewVisible[i] = +n.visible;
         if (q) for (let j = 0; j < 4; j++) previewTransforms[at + 6 + j] = q[j];
       }
-      const lab = !!(motion && motion.lab);
+      const lab = !!(motion && motion.lab && !motion.rage);
       const flexibleClimb = !!(motion && motion.climb && !lab);
       const sceneHull = !!(clearAt && clearAt.needsHull && motion && motion.climb && !flexibleClimb);
       const hulls = !!hullAt || sceneHull;
@@ -1660,7 +1668,7 @@
           facing = fromWalk.heading + walkTurn * t;
         }
         const sine = Math.sin(facing), cosine = Math.cos(facing);
-        poseManaged(step, px, py, pz, facing, speed, false, biped, lounge, motion);
+        poseManaged(step, px, py, pz, facing, speed, airborne, biped, lounge, motion);
         if (!flexibleClimb) previewBounds(previewTo, lab);
         if (hulls) previewHulls(previewHullTo, !sceneHull);
         if (sequenceStep > 0 && clearAt && clearAt.beginPose) clearAt.beginPose(entry);
@@ -1763,7 +1771,9 @@
         if (q) for (let j = 0; j < 4; j++) q[j] = previewTransforms[at + 6 + j];
         updateLocal(n);
       }
-      refreshGeometry(); measureBody();
+      // The saved rig already includes its support and contact corrections.
+      // Refit only the bounds; fitting support again changes a rejected pose.
+      refreshGeometry(); measureBody(false);
       return clear;
     };
     const walkPreviewStart = { x: 0, y: 0, z: 0, heading: 0, planning: false, interval: 0.08 };

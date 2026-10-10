@@ -45,7 +45,10 @@
   const remotes = new Map();
   // room: "off" (signed out or no backend), "connecting", "live", "paused" (hidden a while), or a kick that
 // stopped it ("replaced", "full").
-  const state = { backend: false, me: null, started: false, room: "off", selfId: 0, online: 0, released: null, loopEpoch: 0, zone: "outside", body: null, hostId: 0, followers: 0, npcVersion: 0 };
+  const offline = new URLSearchParams(location.search);
+  const state = { backend: false, me: null, started: false,
+    resolved: offline.has("nosim") || offline.get("net") === "0" || location.protocol !== "http:" && location.protocol !== "https:",
+    room: "off", selfId: 0, online: 0, released: null, loopEpoch: 0, zone: "outside", body: null, hostId: 0, followers: 0, npcVersion: 0 };
   let ws = null, retry = 0, retryTimer = 0, pingTimer = 0, hiddenTimer = 0, stopped = false;
   let npcFrame = null, inHub = false, hubSent = null;
   let zone = "outside", body = null, muted = false, hpSent = 100, koSent = false, hpAt = 0, poseAt = 0, px = NaN, py = NaN, pz = NaN, pyaw = NaN;
@@ -241,18 +244,24 @@
     if (state.started) return;
     state.started = true;
     if (location.protocol !== "https:" && location.protocol !== "http:") return;
+    state.resolved = false;
     try {
       const res = await fetch("/api/me", { credentials: "same-origin", headers: { accept: "application/json" }, signal: AbortSignal.timeout(6000) });
-      if (!res.ok || !(res.headers.get("content-type") || "").startsWith("application/json")) return;
+      // A static host's 404/HTML response establishes that no account exists
+      // here. A timeout or failed account service does not establish sign-out.
+      if (res.status === 404 || res.ok && !(res.headers.get("content-type") || "").startsWith("application/json")) { state.resolved = true; return; }
+      if (!res.ok) return;
       const data = await res.json();
       if (!data || !("player" in data)) return;
       state.backend = true;
       state.me = accept(data.player);
+      state.resolved = data.player === null || !!state.me;
       if (state.me) BL.contributors.addTemporary(data.character, state.me.login);
     } catch {
       return;
+    } finally {
+      emit();
     }
-    emit();
     connect();
   };
 
