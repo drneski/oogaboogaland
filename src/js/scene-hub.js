@@ -3643,6 +3643,40 @@
     }
     return Number.isFinite(nearest);
   };
+  const pileRespawnSpot = (cave, out) => {
+    const inner = Math.max(5, altar.platformRadius + 1.3), outer = inner + 3;
+    const radius = Math.max(PLAYER_RADIUS, cave?.bodyRadius || 0), height = cave?.bodyHeight || 1.6;
+    const start = Math.random() * Math.PI * 2;
+    const outside = remotes?.actors();
+    // Fresh random arrivals, then a bounded scan of three rings if crowded.
+    // Never fall back to a cave, work slot or the Ooga's old wandering point.
+    candidates: for (let attempt = 0; attempt < 192; attempt++) {
+      const scan = attempt - 48;
+      const angle = scan < 0 ? Math.random() * Math.PI * 2 : start + (scan % 48) * Math.PI / 24;
+      const distance = scan < 0 ? Math.sqrt(lerp(inner * inner, outer * outer, Math.random()))
+        : inner + 0.5 + Math.floor(scan / 48);
+      const x = Math.sin(angle) * distance, z = Math.cos(angle) * distance;
+      if (island.surfaceAt(x, z) !== 0 || !physicalClearAt(x, 1e-5, z, radius, height, null)
+        || !npcFireClear(x, 0, z, x, 0, z, height)) continue;
+      for (let i = 0; i < crew.list.length; i++) {
+        const other = crew.list[i], p = other.root.position, feet = p.y - other.baseY;
+        if (other !== cave && other.root.visible && feet < height && feet + other.bodyHeight > 0
+          && Math.hypot(p.x - x, p.z - z) < radius + other.bodyRadius + 0.15) continue candidates;
+      }
+      if (outside) for (let i = 0; i < outside.length; i++) {
+        const p = outside[i];
+        if (p.y < height && p.y + REMOTE_BODY_HEIGHT > 0
+          && Math.hypot(p.x - x, p.z - z) < radius + PLAYER_RADIUS + 0.15) continue candidates;
+      }
+      if (clankers) for (let i = 0; i < clankers.list.length; i++) {
+        const entry = clankers.list[i];
+        if (entry.active && !clankerBodySegmentClear(entry, x, 1e-5, z, x, 1e-5, z, radius, height)) continue candidates;
+      }
+      out.x = x; out.y = 0; out.z = z;
+      return true;
+    }
+    return false;
+  };
   // Surface caves and the headquarters can share a column below the same roof.
   const supportAt = (x, z, y = Infinity) => island.supportAt(x, z, y, STEP_MAX);
   // How far under the surface the Mempool island's water carries each kind of body, so its head stays above:
@@ -3916,8 +3950,18 @@
     return cave.grabbedBy === entry;
   };
   const RAGE_WARP_BORDER = 18.5;
-  const rageWarpRequired = (entry, cave) => !!cave && island.onLand(cave.root.position.x, cave.root.position.z)
-    && Math.hypot(cave.root.position.x, cave.root.position.z) > RAGE_WARP_BORDER;
+  const RAGE_WARP_COLUMN = { caveIndex: 0, floor: 0, ceiling: 0 };
+  const rageWarpRequired = (entry, cave) => {
+    if (!cave) return false;
+    const p = cave.root.position, feet = p.y - cave.baseY + cave.restLower;
+    if (!island.onLand(p.x, p.z) || Math.hypot(p.x, p.z) <= RAGE_WARP_BORDER || feet <= BL.clankers.PROP_STEP) return false;
+    // Exterior ledges and roofs qualify, but a cave's raised floor does not.
+    // Query the actual height: the highest surface hides lower open ledges.
+    const y = feet + 0.08, column = RAGE_WARP_COLUMN, hq = island.headquarters.caveIndex;
+    if (island.cavityAt(p.x, p.z, column, hq, y) && column.caveIndex === hq
+      && y >= column.floor - STEP_MAX && y < column.ceiling) return false;
+    return !(island.cavityAt(p.x, p.z, column, 0, y) && y >= column.floor - STEP_MAX && y < column.ceiling);
+  };
   const RAGE_WARP_MOTION = { lab: false, rage: true, workExit: true, supportOffset: 0, supportEntry: null,
     dragging: true, throwProgress: 0, walkGait: "gallop", walkPhase: NaN,
     groundRects: { flat: {}, angled: {} } };
@@ -3995,20 +4039,33 @@
       || !rageCaptureEligible(entry, cave) || rageCaptive(entry) || !rageWarpRequired(entry, cave)) return false;
     const spotIndex = rageWarpHomeSpot(entry, cave, true);
     if (spotIndex < 0) return false;
-    // The visit to the target and the held return are one update. A narrow
-    // ledge need not fit a standing gorilla: only the final paired ground
-    // pose is rendered, and that endpoint has already passed the real checks.
+    // Save the visible ankle before stopping the target's movement. The
+    // brief wall visit pins the palm here without fitting either body to rock.
     const p = cave.root.position, q = entry.root.position, rec = entry.capture;
+    rec.warpFromX = q.x; rec.warpFromY = q.y; rec.warpFromZ = q.z; rec.warpFromHeading = entry.heading;
+    captureBounds(cave, rec.bounds);
+    const foot = cave.parts.legR, bounds = BL.scene.boundsOf(foot.geometry);
+    BL.math.mat4.transformPoint(dragFoot, foot.world, bounds.center[0], bounds.min[1], bounds.center[2]);
+    rec.warpAnkleX = dragFoot[0]; rec.warpAnkleY = dragFoot[1]; rec.warpAnkleZ = dragFoot[2];
     q.x = p.x; q.y = p.y - cave.baseY + cave.restLower; q.z = p.z;
     entry.heading = Math.atan2(-p.x, -p.z);
-    rec.warpSpot = spotIndex; rec.cave = cave; rec.autonomous = true; rec.throwing = rec.posed = false;
+    rec.warpSpot = spotIndex; rec.warpVisit = true; rec.cave = cave; rec.autonomous = true; rec.throwing = rec.posed = false;
     rec.time = rec.charge = 0; rec.safeX = p.x; rec.safeY = q.y; rec.safeZ = p.z;
     rec.player = cave === pilot.player;
-    captureBounds(cave, rec.bounds);
     cave.grabbedBy = entry; entry.motion.dragging = true; entry.motion.throwProgress = 0;
     crew.prepareDragged(cave);
     captureFlightEnvelope(cave, rec);
     return true;
+  };
+  const rageWarpPose = (entry) => {
+    const rec = entry.capture, cave = rec.cave, p = entry.root.position, motion = entry.motion;
+    // Animation-only airborne pose: no planted-hand fitting against the wall
+    // and no actual jump controller. The manager holds this pose until return.
+    entry.gorilla.poseManaged(2, p.x, p.y, p.z, entry.heading, 0, true, false, "", motion);
+    entry.gorilla.poseManaged(2, p.x, p.y, p.z, entry.heading, 0, true, false, "", motion);
+    const hand = clankerGripAt(entry);
+    p.x += rec.warpAnkleX - hand[0]; p.y += rec.warpAnkleY - hand[1]; p.z += rec.warpAnkleZ - hand[2];
+    grabbedOogaPose(cave);
   };
   const rageWarpHome = (entry) => {
     const rec = entry.capture, cave = rec?.cave;
@@ -4031,7 +4088,9 @@
     // drop must not restore the old cliff position after a successful return.
     rec.safeX = p.x; rec.safeY = p.y; rec.safeZ = p.z;
     rec.warpSpot = -1;
-    return grabbedOogaPose(cave, false, true);
+    if (!grabbedOogaPose(cave, false, true)) return false;
+    rec.warpVisit = false;
+    return true;
   };
   const captureFlightEnvelope = (cave, rec) => {
     // Measure the released flying limbs once per capture. The walking
@@ -4092,6 +4151,7 @@
     const rec = entry?.capture, cave = rec?.cave;
     if (!cave) return false;
     if (cave.grabbedBy !== entry) return false;
+    if (throwing && rec.warpVisit) return false;
     const p = cave.root.position, hand = clankerGripAt(entry), handY = hand[1];
     // Rage aims a direction; moving the hand through the swing must not
     // change its 45-degree release. Player throws still aim at a point.
@@ -4117,6 +4177,13 @@
     }
     rec.cave = null; rec.throwing = false; rec.posed = false;
     entry.motion.dragging = false; entry.motion.throwProgress = 0;
+    if (rec.warpVisit) {
+      // Cancelling at the wall restores the hunter's starting point, never
+      // leaves an unheld gorilla embedded beneath the temporary ankle grip.
+      const q = entry.root.position;
+      q.x = rec.warpFromX; q.y = rec.warpFromY; q.z = rec.warpFromZ; entry.heading = rec.warpFromHeading;
+    }
+    rec.warpVisit = false; rec.warpSpot = -1;
     cave.grabbedBy = null;
     crew.recoverDragged(cave);
     crew.poseWeapon(cave);
@@ -4140,7 +4207,7 @@
     const rec = entry?.capture;
     if (!rec?.cave) return false;
     if (!throwing) return finishClankerRider(entry, false);
-    if (rec.throwing) return false;
+    if (rec.throwing || rec.warpVisit) return false;
     rec.throwing = true; rec.time = 0; rec.charge = charge;
     const target = rec.aim;
     target.ox = aim ? aim.ox : entry.root.position.x;
@@ -4154,7 +4221,7 @@
   const rageRelease = (entry) => finishClankerRider(entry, false);
   const rageThrow = (entry, dx, dz, charge) => {
     const rec = entry?.capture;
-    if (!BL.clankerRage.signedOut() || !entry?.rage?.active || !rec?.autonomous || !rec.cave || rec.throwing) return false;
+    if (!BL.clankerRage.signedOut() || !entry?.rage?.active || !rec?.autonomous || !rec.cave || rec.throwing || rec.warpVisit) return false;
     const length = Math.hypot(dx, dz);
     if (!(length > 0)) return false;
     const hand = clankerGripAt(entry), aim = rec.aim;
@@ -4309,6 +4376,15 @@
     const rec = entry.capture, parts = cave.parts, p = cave.root.position, hand = clankerGripAt(entry);
     const oldX = p.x, oldY = p.y, oldZ = p.z;
     cave.root.quaternion = null;
+    if (rec.warpVisit && !endpointOnly) {
+      // Keep the target above its held ankle during the visible visit. Rock
+      // overlap is intentional here; the ground return uses normal pose checks.
+      cave.root.rotation.x = cave.root.rotation.z = 0; cave.root.rotation.y = entry.heading;
+      parts.legR.rotation.x = 0; parts.legL.rotation.x = 0.25;
+      alignDraggedFoot(cave, hand);
+      if (!preview) { captureBounds(cave, rec.bounds); rec.posed = true; rec.blocked = ""; }
+      return true;
+    }
     const headReach = cave.traits.height * 0.9, sx = Math.sin(entry.heading), sz = Math.cos(entry.heading);
     const floor = playerSupportAt(hand[0] - sx * headReach, hand[2] - sz * headReach, hand[1], hand[1], cave, false, true, BL.clankers.rageCarrying(entry));
     cave.root.rotation.x = -Math.acos(clamp((floor + 0.12 - hand[1]) / headReach, -0.7, 0.3));
@@ -6650,7 +6726,7 @@
     setMatrixInside(false);
     // Respawn arrives in the ordinary world immediately, with no retreating wave left in Matrix mode.
     MATRIX_WORLD.active = MATRIX_WORLD.direction = MATRIX_WORLD.radius = 0;
-    navigate("pile");
+    navigate("pile", true);
   };
   const matrixControlNear = (x, y, z, reach = MATRIX_BUTTON_REACH) => !!matrixControl && actionWithinReach(x, y, z, matrixControl.x, matrixCave.mouth.floorY + matrixControl.button.position.y, matrixControl.z, reach);
   const playerNearMatrixControl = () => {
@@ -6929,9 +7005,10 @@
     }
     return true;
   };
-  const navigate = (name) => {
+  const navigate = (name, respawn = false) => {
     const destination = NAVIGATION, p = destination.position, target = destination.target;
     const player = pilot.player, close = pilot.closeWanted, basement = name === "basement", underground = name === "underground" || basement;
+    const randomPile = respawn && name === "pile";
     let x = 0, z = 0, yaw = 0, pitch = 0.18, dist = player ? 6 : 8;
     if (name === "pile") {
       z = Math.max(5, altar.platformRadius + 1.3);
@@ -6992,9 +7069,12 @@
     // original arrival row, or its trailing camera, without blocking the cave.
     const depths = name === "lab" || name === "mirror" || name === "factory" ? NAVIGATION_DEPTHS : NAVIGATION_SAME_DEPTH;
     arrivals: for (const depth of depths) for (const offset of NAVIGATION_SIDES) {
-      p.x = x + Math.cos(yaw) * offset + Math.sin(yaw) * depth;
-      p.z = z - Math.sin(yaw) * offset + Math.cos(yaw) * depth;
-      p.y = name === "timechain" ? timechainIsland.place.y : name === "mempool" ? mempoolIsland.place.y + mempoolIsland.layout.FLOOR : name === "bifrost" ? bifrostIsle.site.arrival.y : underground ? (basement ? island.headquarters.basement.floor : island.headquarters.floor) : island.surfaceAt(p.x, p.z);
+      if (randomPile) { if (!pileRespawnSpot(player, p)) continue; }
+      else {
+        p.x = x + Math.cos(yaw) * offset + Math.sin(yaw) * depth;
+        p.z = z - Math.sin(yaw) * offset + Math.cos(yaw) * depth;
+        p.y = name === "timechain" ? timechainIsland.place.y : name === "mempool" ? mempoolIsland.place.y + mempoolIsland.layout.FLOOR : name === "bifrost" ? bifrostIsle.site.arrival.y : underground ? (basement ? island.headquarters.basement.floor : island.headquarters.floor) : island.surfaceAt(p.x, p.z);
+      }
       if (name !== "timechain" && name !== "bifrost" && name !== "mempool" && !island.onLand(p.x, p.z) || !navigationClearAt(p.x, p.y + 1e-5, p.z, PLAYER_RADIUS, player ? player.bodyHeight : 1.6)) continue;
       destination.yaw = Math.atan2(p.x - target.x, p.z - target.z);
       destination.pitch = close ? Math.atan2(p.y + (player ? player.headOffset * CLOSE_VIEW.eyeRatio : CLOSE_VIEW.eyeHeight) - target.y, Math.hypot(p.x - target.x, p.z - target.z)) : pitch;
@@ -7019,7 +7099,7 @@
       break arrivals;
     }
     if (!found) {
-      hud.toast("That arrival is blocked. Choose another map dot.");
+      if (!randomPile) hud.toast("That arrival is blocked. Choose another map dot.");
       return;
     }
     // A destination switches a gorilla driver back to free view after validating the arrival.
@@ -9612,7 +9692,8 @@
   };
   const registerClanker = (entry) => {
     entry.capture = { entry, cave: null, autonomous: false, player: false, throwing: false, posed: false,
-      blocked: "", blockedPart: "", blockedStage: "", warpSpot: -1,
+      blocked: "", blockedPart: "", blockedStage: "", warpSpot: -1, warpVisit: false,
+      warpAnkleX: 0, warpAnkleY: 0, warpAnkleZ: 0, warpFromX: 0, warpFromY: 0, warpFromZ: 0, warpFromHeading: 0,
       flightRadius: PLAYER_RADIUS, flightBottom: 0, flightTop: 0,
       time: 0, charge: 0, x: 0, z: 0, safeX: 0, safeY: 0, safeZ: 0, side: 0, behind: 0,
       aim: { ox: 0, oy: 0, oz: 0, dx: 0, dy: 0, dz: 0 },
@@ -10165,6 +10246,7 @@
     shared.npcStrandedAt = (cave, x, y, z) => npcRampRoofAt(x, y, z);
     shared.npcCaveRoofAt = npcCaveRoofAt;
     shared.npcRecoverySpot = npcRecoverySpot;
+    shared.respawnSpot = pileRespawnSpot;
     shared.shoulderObstacleActive = solids.isActive;
     shared.shoulderObstacle = (cave, fx, fz, reach, out) => {
       const p = cave.root.position;
@@ -10490,7 +10572,7 @@
     }
     const labSiteIndex = shared.workSites.findIndex(site => site.mouth === entropyLab.mouth);
     clankers = BL.clankers.create({ root, crew, sites: shared.workSites, loungeRoofs, loungeAreas, climbRoofs, chillZones, descentWalls,
-      rageLandAt, rageEdgeAt, rageEdgeHeading, rageEdgeGoal, rageApproach, rageWarpRequired, rageWarpTarget, rageWarpHome, rageGrab, rageCaptive, rageRelease, rageThrow, rageDragClear, rageCarryClear, rageCaptureEligible, rageJumpPoseClear,
+      rageLandAt, rageEdgeAt, rageEdgeHeading, rageEdgeGoal, rageApproach, rageWarpRequired, rageWarpTarget, rageWarpPose, rageWarpHome, rageGrab, rageCaptive, rageRelease, rageThrow, rageDragClear, rageCarryClear, rageCaptureEligible, rageJumpPoseClear,
       rageHuntRange: entry => entry.radius + BODY_RADIUS + 0.35,
       sleep: clankerBeds(),
       walkingPeersClear: clankerWalkingPeersClear,

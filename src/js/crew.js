@@ -3980,9 +3980,13 @@
       if (travel.mode === "landing") {
         runPlayer(cave, dt, false);
         if (ctx.abyssAt && ctx.abyssAt(p.x, p.z, p.y - cave.baseY, cave) && p.y - cave.baseY < ctx.abyssRespawnY) {
+          if (ctx.respawnSpot && !ctx.respawnSpot(cave, NPC_RECOVERY_SPOT)) return;
           if (ctx.onAbyssRespawn) ctx.onAbyssRespawn(cave);
-          setVec(p, walkIn.x, cave.baseY + groundAt(walkIn.x, walkIn.z, Infinity, Infinity, cave), walkIn.z);
-          cave.hop = cave.hopV = 0;
+          if (ctx.respawnSpot) setVec(p, NPC_RECOVERY_SPOT.x, cave.baseY + NPC_RECOVERY_SPOT.y, NPC_RECOVERY_SPOT.z);
+          else setVec(p, walkIn.x, cave.baseY + groundAt(walkIn.x, walkIn.z, Infinity, Infinity, cave), walkIn.z);
+          cave.hop = cave.hopV = cave.jumps = 0;
+          cave.leap.vx = cave.leap.vz = 0; cave.leap.thrown = cave.leap.rageThrown = false;
+          cave.cloudSupport = null;
         }
         if (grounded(cave)) startBedRoute(cave, travel.toBed ? cave.bedroll : travel.bed, travel.toBed);
         return;
@@ -4950,12 +4954,19 @@
           cave.parts.armR.rotation.x = cave.parts.armL.rotation.x = -2.1;
           if (cave.root.position.y - cave.baseY >= ctx.abyssRespawnY) return;
         }
+        if (ctx.respawnSpot && !ctx.respawnSpot(cave, NPC_RECOVERY_SPOT)) return;
         if (ctx.onAbyssRespawn) ctx.onAbyssRespawn(cave);
         cave.hop = cave.hopV = cave.jumps = 0;
         cave.leap.vx = cave.leap.vz = 0;
         standPose(cave);
-        // Chilling Oogas can enter the island without ever owning a work slot.
-        if (cave.slot) standAtSlot(cave);
+        cave.cloudSupport = null;
+        // A scene's respawn location takes priority over work and wander slots.
+        if (ctx.respawnSpot) {
+          setVec(cave.root.position, NPC_RECOVERY_SPOT.x, cave.baseY + NPC_RECOVERY_SPOT.y, NPC_RECOVERY_SPOT.z);
+          cave.walk = null; cave.work.phase = ""; cave.work.direct = true; cave.act.spot.sit = false;
+          resetWalkerRoute(cave); cave.progress.backoff = 0;
+        }
+        else if (cave.slot) standAtSlot(cave);
         else if (ctx.npcRecoverySpot && ctx.npcRecoverySpot(cave, NPC_RECOVERY_SPOT))
           setVec(cave.root.position, NPC_RECOVERY_SPOT.x, cave.baseY + NPC_RECOVERY_SPOT.y, NPC_RECOVERY_SPOT.z);
         else setVec(cave.root.position, walkIn.x, cave.baseY + groundAt(walkIn.x, walkIn.z, Infinity, Infinity, cave), walkIn.z);

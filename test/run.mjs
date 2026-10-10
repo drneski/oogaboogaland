@@ -454,13 +454,24 @@ const gorillaRageProof = async () => {
       && f.stats.warpCapture.root.x === 9.1 && f.stats.warpCapture.root.y === 5 && f.stats.warpCapture.root.z === 2
       && target.humanControlled && target.state === "chilling"
       && Object.keys(targetPose).every(key => f.stats.warpCapture.target[key] === targetPose[key]);
-    const immediate = f.stats.homeAttempts === 1 && f.stats.homes === 1 && f.stats.homeHeld
+    const visit = JSON.stringify([e.root.position, e.heading, target.root.position]), due = 0.1 + R.WARP_HOLD_TIME;
+    let paused = R.WARP_HOLD_TIME > 0 && !f.stats.homeAttempts && !f.stats.walks && !f.stats.edgeGoals;
+    for (const time of [0.1 + R.WARP_HOLD_TIME / 2, due - 1e-6]) {
+      f.at(time, 0.1);
+      paused &&= JSON.stringify([e.root.position, e.heading, target.root.position]) === visit
+        && !f.stats.homeAttempts && !f.stats.walks && !f.stats.edgeGoals && !f.stats.legs
+        && e.held === target && target.grabbedBy === e && target.humanControlled
+        && e.rage.homePending && e.rage.warpWaiting && e.rage.grabHeld && e.rage.throwHeld && e.rage.throwCharge > 0;
+    }
+    f.at(due, 0.1);
+    const returned = f.stats.homeAttempts === 1 && f.stats.homes === 1 && f.stats.homeHeld
+      && f.stats.homeTimes[0] - f.stats.warpTimes[0] >= R.WARP_HOLD_TIME
       && e.root.position.x === f.constraints.edgeMin && e.root.position.y === 0 && e.root.position.z === 0
       && Math.abs(target.root.position.x - e.root.position.x - 0.9) < 1e-9 && target.root.position.y === 0 && target.root.position.z === 0
       && !e.rage.homePending && !e.rage.warpWaiting && !e.traversing && !e.rage.traversing
       && e.rage.edgeOriginX === e.root.position.x && e.rage.edgeOriginY === 0 && e.rage.edgeOriginZ === 0;
     f.tick(0.2);
-    rows.warpCaptiveReturnsAtomically = immediate && f.stats.warpAttempts === 1 && f.stats.homeAttempts === 1 && !f.stats.descents
+    rows.warpCaptiveReturnsAtomically = paused && returned && f.stats.warpAttempts === 1 && f.stats.homeAttempts === 1 && !f.stats.descents
       && e.held === target && target.grabbedBy === e && target.humanControlled && e.rage.grabHeld && e.rage.throwHeld && e.rage.throwCharge > 0
       && !f.stats.releases && !f.stats.throws && f.stats.maxLegs <= 96;
     f.dispose();
@@ -471,16 +482,18 @@ const gorillaRageProof = async () => {
     f.constraints.homeBlocked = true; f.hits(e, 42); f.at(0.1, 0.1);
     const before = JSON.stringify([e.root.position, e.heading, target.root.position]);
     const walks = f.stats.walks, legs = f.stats.maxLegs;
-    let retained = true;
-    for (const time of [0.2, 0.5, 0.849, 0.851, 1.5]) {
+    const due = 0.1 + R.WARP_HOLD_TIME;
+    let retained = !f.stats.homeAttempts;
+    for (const time of [0.1 + R.WARP_HOLD_TIME / 2, due - 1e-6, due, due + 0.749, due + 0.75, due + 1.499]) {
       f.at(time, 0.1);
       retained &&= JSON.stringify([e.root.position, e.heading, target.root.position]) === before
         && e.held === target && target.grabbedBy === e && target.humanControlled && e.rage.grabHeld && e.rage.throwHeld
         && e.rage.homePending && e.rage.warpWaiting && !e.traversing && !e.rage.traversing;
     }
     const waited = f.stats.homeAttempts === 2 && e.rage.throwCharge === 1 && f.stats.walks === walks && f.stats.maxLegs === legs;
-    f.constraints.homeBlocked = false; f.at(1.602, 0.1);
+    f.constraints.homeBlocked = false; f.at(due + 1.502, 0.1);
     rows.blockedHomeRetainsCapture = retained && waited && f.stats.homes === 1 && f.stats.homeAttempts === 3
+      && f.stats.homeTimes[0] - f.stats.warpTimes[0] >= R.WARP_HOLD_TIME
       && f.stats.homeTimes.every((time, i, times) => !i || time - times[i - 1] >= 0.75)
       && e.held === target && target.grabbedBy === e && target.humanControlled && e.rage.grabHeld
       && !e.rage.homePending && !e.rage.warpWaiting && e.root.position.y === 0 && !f.stats.descents && !f.stats.releases;
@@ -507,8 +520,8 @@ const gorillaRageProof = async () => {
     Object.assign(target.root.position, { x: 10, y: 5, z: 2 });
     f.constraints.homeBlocked = true; f.hits(e, 42); f.at(0.1, 0.1);
     const before = JSON.stringify([e.root.position, target.root.position]);
-    e.suspended = true; f.constraints.homeBlocked = false; f.at(0.9, 0.1);
-    rows.suspendedHomeDoesNotWarp = f.stats.homeAttempts === 1 && !f.stats.homes && !e.held && !target.grabbedBy
+    e.suspended = true; f.constraints.homeBlocked = false; f.at(0.1 + R.WARP_HOLD_TIME / 2, 0.1);
+    rows.suspendedHomeDoesNotWarp = !f.stats.homeAttempts && !f.stats.homes && !e.held && !target.grabbedBy
       && JSON.stringify([e.root.position, target.root.position]) === before && !e.rage.grabHeld && !e.rage.throwHeld;
     f.dispose();
   }
@@ -5059,12 +5072,72 @@ const hubRoutes = { name: "hub routes", why: "playthrough: every scene the islan
   record("hub routes: under the Mempool island a walker behind the chamber's wall is drawn through the rock as a rim from a view in the chamber, and gets none in plain sight from behind in the tunnel",
     walked.eyeInChamber && walked.rimBehindWall === true && walked.eyeInTunnel && walked.rimInSight === false, JSON.stringify({ eyeInChamber: walked.eyeInChamber, rimBehindWall: walked.rimBehindWall, eyeInTunnel: walked.eyeInTunnel, rimInSight: walked.rimInSight }));
 } };
-const hubFall = { name: "hub fall", why: "rule: walking off the island drops the Ooga into the abyss and brings it back to the pile, still yours", run: async (b) => {
+const hubFall = { name: "hub fall", why: "rule: abyss falls return players and NPCs to varied clear ground around the banana pile, preserving possession", run: async (b) => {
   await b.evaluate(`(() => { const B = window.__ooga, a = B.cavemen.get("portlandhodl"), I = B.island, ang = Math.PI / 4; if (B.crew.player !== a) B.pilot.possess(a); let r = 5; while (I.onLand(Math.sin(ang) * r, Math.cos(ang) * r)) r += 0.25; r -= 1.5; const x = Math.sin(ang) * r, z = Math.cos(ang) * r; B.pilot.navigate({ position: { x, y: I.surfaceAt(x, z), z }, yaw: ang + Math.PI, pitch: 0.4, dist: 10 }); B.advance(0.5, 1 / 60); })()`);
   await b.send("Input.dispatchKeyEvent", { type: "keyDown", key: "w", text: "w", code: "KeyW" });
   const r = await b.evaluate(`(() => { const B = window.__ooga, a = B.cavemen.get("portlandhodl"), p = a.root.position; let minFeet = Infinity, back = null; for (let i = 0; i < 20 * 30; i++) { B.advance(1 / 30, 1 / 30); minFeet = Math.min(minFeet, p.y - a.baseY); if (minFeet < -50 && Math.hypot(p.x, p.z) < 12) { back = i / 30; break; } } return { minFeet: +minFeet.toFixed(1), back, onLand: B.island.onLand(p.x, p.z), yours: B.crew.player === a }; })()`);
   await b.send("Input.dispatchKeyEvent", { type: "keyUp", key: "w", code: "KeyW" });
-  record("hub fall: an Ooga walked off the edge falls into the abyss and is back at the pile within six seconds, still yours", r.minFeet < -50 && r.back !== null && r.back < 6 && r.onLand && r.yours, JSON.stringify(r));
+  const respawns = await b.evaluate(`(() => {
+    const B = __ooga, a = B.cavemen.get("portlandhodl"), solids = B.headquarters.solids.props;
+    const available = c => c !== a && c.root.visible && !c.health.stunned && !c.grabbedBy && !c.bedTravel.mode
+      && !c.camp.seat && !c.camp.burning && !c.camp.rolling && !c.puppet && !c.remoteControlled
+      && c.traits.name !== "SaniExp" && (c.state === "working" || c.state === "chilling");
+    const npc = B.crew.list.find(c => available(c) && c.slot) || B.crew.list.find(available);
+    if (!npc) return { setup: false, rows: [] };
+    const inner = Math.max(5, B.altar.platformRadius + 1.3), outer = inner + 3, rows = [];
+    const override = npc.override, state = npc.state, slot = npc.slot;
+    const sample = c => {
+      const p = c.root.position, feet = p.y - c.baseY;
+      let gap = Infinity;
+      for (const other of B.crew.list) {
+        const q = other.root.position, bottom = q.y - other.baseY;
+        if (other !== c && other.root.visible && feet < bottom + other.bodyHeight && feet + c.bodyHeight > bottom)
+          gap = Math.min(gap, Math.hypot(p.x - q.x, p.z - q.z) - c.bodyRadius - other.bodyRadius);
+      }
+      return { x: p.x, z: p.z, feet, radius: Math.hypot(p.x, p.z), onLand: B.island.onLand(p.x, p.z),
+        surface: B.island.surfaceAt(p.x, p.z), gap,
+        clear: B.island.clearAt(p.x, feet + .025, p.z, c.bodyRadius, c.bodyHeight - .025)
+          && solids.clearAt(p.x, feet + .025, p.z, c.bodyRadius, c.bodyHeight - .025),
+        yours: B.crew.player === a && B.pilot.player === a && a.humanControlled,
+        npcUndriven: B.crew.player !== npc && B.pilot.player !== npc && !npc.humanControlled };
+    };
+    const natural = sample(a);
+    B.pilot.controls.reset();
+    try {
+      // The first fall above uses real keys. Repeated arrivals start below
+      // the abyss threshold and run the same update/respawn controllers.
+      // Keep any real work slot: it must not override the pile destination.
+      for (const mode of ["player", "npc", "bed-landing"]) {
+        const landings = [], c = mode === "player" ? a : npc;
+        for (let attempt = 0; attempt < 2; attempt++) {
+          B.crew.prepareDragged(c); B.crew.recoverDragged(c);
+          c.cloudSupport = null; c.camp.panic.active = c.roofEscape.active = false;
+          if (mode === "player") B.crew.relocatePlayer({ x: 120, y: -80, z: 120 }, 0);
+          else {
+            c.slot = slot; c.override = c.state = state;
+            Object.assign(c.bedTravel, { mode: mode === "bed-landing" ? "landing" : "", plan: null, route: null, manual: false, toBed: false, bed: null });
+            Object.assign(c.root.position, { x: 120, y: -80 + c.baseY, z: 120 });
+          }
+          const startedBelow = c.root.position.y - c.baseY < -70 && !B.island.onLand(c.root.position.x, c.root.position.z);
+          let frames = 0;
+          do { B.advance(1 / 60, 1 / 60); frames++; }
+          while (c.root.position.y - c.baseY < -50 && frames < 8);
+          landings.push({ ...sample(c), startedBelow, frames });
+        }
+        rows.push({ mode, hadSlot: !!slot, landings,
+          varied: Math.hypot(landings[1].x - landings[0].x, landings[1].z - landings[0].z) > 1e-4 });
+      }
+      return { setup: true, inner, outer, natural, rows };
+    } finally {
+      npc.override = override; npc.state = state; B.crew.refreshStates(true);
+    }
+  })()`);
+  const landed = p => p.onLand && p.radius >= respawns.inner - 1e-7 && p.radius <= respawns.outer + 1e-7
+    && Math.abs(p.feet) < .025 && p.surface === 0 && p.clear && p.gap >= -1e-7 && p.yours && p.npcUndriven;
+  record("hub fall: an Ooga walked off the edge falls into the abyss and is back at the pile within six seconds, still yours", r.minFeet < -50 && r.back !== null && r.back < 6 && r.onLand && r.yours
+    && respawns.setup && landed(respawns.natural) && respawns.rows.length === 3
+    && respawns.rows.every(row => row.varied && row.landings.length === 2 && row.landings.every(p => p.startedBelow && p.frames <= 8 && landed(p))),
+    JSON.stringify({ ...r, respawns }));
 } };
 const hubGrounding = { name: "hub grounding", why: "regression: a placement from above landed on a drifting cloud, and a roaming gorilla read a tree crown as a floor", run: async (b) => {
   const r = await b.evaluate(`(() => { const B = window.__ooga, clouds = [];
@@ -8639,6 +8712,7 @@ scene("hub", { label: "gorilla lab carry jump", query: "character=gorilla-portla
     const clipped = () => { let count = 0; S.traverseVisible(e.root, node => { if (node.geometry?.clipPlane) count++; }); return count; };
     let began = false, queued = false, captured = false, captureInside = false, held = true, identity = true, cleanPose = true, insideFrames = 0;
     let heldFrames = 0, setup = null, baseline = null, restored = false;
+    const pursuit = { frames: 0, bounded: true, maxStep: 0, noWarp: true, heldInside: true };
     try {
       C.possess(e); C.update(dt);
       e.gorilla.poseManaged(2, e.root.position.x, e.root.position.y, e.root.position.z, e.heading, 0, false, true, "", e.motion);
@@ -8671,8 +8745,8 @@ scene("hub", { label: "gorilla lab carry jump", query: "character=gorilla-portla
         && lab.phase.inside(p.x, p.y, p.z) && e.motion.lab && e.gorilla.debug.lab && e.gorilla.debug.gait === "upright"
         && e.gorilla.form === "ape" && names.every((name, i) => e.gorilla.parts[name].geometry === normalGeometry[i])
         && clipped() === normalClipped && B.pilot.player === c && B.crew.player === c;
-      // A lab floor lies beyond the strict home border: the capture is the
-      // same-frame teleport and held return to a flat meadow pad.
+      // A cave interior never qualifies for the outer-ledge teleport. Keep
+      // this real clear contact and require ordinary capture in the lab.
       B.crew.relocatePlayer({ x: m.x - sx * 1.3, y: m.floorY, z: m.z - sz * 1.3 }, m.ry);
       e.gorilla.poseManaged(2, p.x, p.y, p.z, e.heading, 0, false, false, "", e.motion);
       S.updateWorld(root);
@@ -8693,15 +8767,20 @@ scene("hub", { label: "gorilla lab carry jump", query: "character=gorilla-portla
       C.plan(c, labSite); queued &&= e.pendingSite === labSite && e.phase === "rage" && !e.route;
       for (let frame = 0; frame < 60; frame++) {
         const targetInside = !c.grabbedBy && lab.phase.inside(q.x, q.y - c.baseY, q.z);
+        const beforeX = p.x, beforeZ = p.z;
         B.advance(dt, dt); watch();
+        const step = Math.hypot(p.x - beforeX, p.z - beforeZ);
+        pursuit.frames++; pursuit.maxStep = Math.max(pursuit.maxStep, step);
+        pursuit.bounded &&= step <= BL.clankers.RAGE_SPEED * dt + 1e-7;
+        pursuit.noWarp &&= !e.capture.warpVisit && !e.rage.homePending;
         if (!captured && c.grabbedBy === e) {
           captured = true;
-          captureInside = targetInside && !lab.phase.inside(p.x, p.y, p.z) && !e.rage.homePending
-            && Math.hypot(p.x, p.z) <= 14 + 1e-7 && Math.abs(B.island.surfaceAt(p.x, p.z) - p.y) < .025;
+          captureInside = targetInside && lab.phase.inside(p.x, p.y, p.z);
         }
         if (captured) {
           held &&= c.grabbedBy === e && e.capture.cave === c && e.rage.grabHeld && e.motion.dragging;
           heldFrames++;
+          pursuit.heldInside &&= lab.phase.inside(p.x, p.y, p.z);
           if (!held || heldFrames >= 6) break;
         }
       }
@@ -8710,7 +8789,7 @@ scene("hub", { label: "gorilla lab carry jump", query: "character=gorilla-portla
       C.debugRage(e, false); B.advance(dt, dt);
       const released = !e.rage.active && !c.grabbedBy && !e.capture.cave && !e.motion.dragging && e.gorilla.form === "ape"
         && B.pilot.player === c && B.crew.player === c;
-      return { began, queued, baseline, setup, captured, captureInside, held, identity, cleanPose, insideFrames, heldFrames, restored, released, beforeStop,
+      return { began, queued, baseline, setup, captured, captureInside, held, identity, cleanPose, insideFrames, heldFrames, pursuit, restored, released, beforeStop,
         end: { position: { ...p }, phase: e.rage.phase, blocked: e.capture.blocked, blockedPart: e.capture.blockedPart,
           blockedStage: e.capture.blockedStage, lab: e.motion.lab, gait: e.gorilla.debug.gait } };
     } finally { C.debugRage(e, false); B.pilot.release(true); code.dispose(); }
@@ -8719,12 +8798,13 @@ scene("hub", { label: "gorilla lab carry jump", query: "character=gorilla-portla
     state.lab && state.ran && state.grabbed && state.first && state.peak > 0.5 && state.second && state.charged && state.heldThroughRelease
       && state.thrownInAir && state.smashUnchanged && rage.began && rage.queued && rage.baseline?.inside && rage.baseline.lab
       && rage.baseline.gait === "upright" && rage.baseline.clipped > 0
-      && rage.setup?.mapReady && rage.setup.gorillaInside && rage.setup.targetInside && rage.setup.eligible && rage.setup.warpRequired && rage.setup.targetClear && rage.setup.gorillaClear
+      && rage.setup?.mapReady && rage.setup.gorillaInside && rage.setup.targetInside && rage.setup.eligible && !rage.setup.warpRequired && rage.setup.targetClear && rage.setup.gorillaClear
       && rage.insideFrames >= 30 && rage.restored && rage.captured && rage.captureInside && rage.held && rage.heldFrames >= 6
+      && rage.pursuit.frames >= 6 && rage.pursuit.bounded && rage.pursuit.noWarp && rage.pursuit.heldInside
       && rage.identity && rage.cleanPose && rage.released,
     JSON.stringify({ ...state, rage }));
 } }] });
-scene("hub", { label: "gorilla rage throw", query: "status=chillin&gorillarage=1", steps: [{ name: "gorilla rage throw", why: "playthrough: an autonomous gorilla carries past nearby Oogas and rocks, teleports to border targets and returns holding them to flat ground without jumping, then throws with real terrain clearance before hunting again", run: async (b) => {
+scene("hub", { label: "gorilla rage throw", query: "status=chillin&gorillarage=1", steps: [{ name: "gorilla rage throw", why: "playthrough: an autonomous gorilla carries past nearby Oogas and rocks, visibly grabs raised outer targets before returning them to flat ground, pursues ordinary ground targets on foot, then throws with real terrain clearance before hunting again", run: async (b) => {
   const states = [], sceneryVisibility = await b.evaluate(`__ooga.props.map(prop => prop.node.visible)`);
   // Complete the production map with all scenery present before isolating
   // actors or adding contact props. Each spot uses at most 201 static checks.
@@ -8748,7 +8828,7 @@ scene("hub", { label: "gorilla rage throw", query: "status=chillin&gorillarage=1
     const plain = fixture.startsWith("plain-"), crowded = fixture.startsWith("rock-"), sceneScenery = fixture.startsWith("scenery-"), raised = fixture === "raised-overlap";
     const palm = fixture.startsWith("palm-"), hill = fixture.startsWith("hill-"), boundary = fixture.startsWith("border-") ? fixture.slice(7) : "";
     const mappedCarry = palm || crowded || fixture === "barrel";
-    const regional = fixture === "bridge" || fixture === "rainforest", warpExpected = hill || boundary === "outside";
+    const regional = fixture === "bridge" || fixture === "rainforest", warpExpected = hill;
     const expectedLand = fixture === "bridge" ? 5 : fixture === "rainforest" ? 2 : 1, fullScenery = sceneScenery || hill || boundary || regional;
     const controlled = hill || !!boundary || regional;
     const M = B.poolIsland;
@@ -8959,8 +9039,9 @@ scene("hub", { label: "gorilla rage throw", query: "status=chillin&gorillarage=1
     }
     if (boundary) {
       const border = 18.5, radius = border + (boundary === "inside" ? -0.05 : boundary === "outside" ? 0.05 : 0);
-      // Keep all scenery and use an exposed flat point at the exact radius.
-      // Both sides start four metres away, outside ordinary grabbing reach.
+      // Keep all scenery and use exposed ordinary ground at the exact radius.
+      // Height is required as well as the border: all three must walk the
+      // four metres from their starts, outside ordinary grabbing reach.
       for (let direction = 0; direction < 24; direction++) {
         setup.attempts++;
         const angle = direction * Math.PI / 12, dx = Math.sin(angle), dz = Math.cos(angle);
@@ -9091,8 +9172,10 @@ scene("hub", { label: "gorilla rage throw", query: "status=chillin&gorillarage=1
     const jumps = { startY: e.root.position.y, huntUp: 0, carryUp: 0, carryDown: 0, captureY: null, captureFeet: null,
       countStart: e.jumps, countUnchanged: true, airborneFrames: 0, highestY: e.root.position.y, events: [] };
     const warp = { observed: false, sameFrameCapture: false, traversalCleared: false, from: null, to: null,
-      target: null, targetClear: false, targetSupported: false, horizontal: 0, rise: 0, stepLimit: BL.clankers.RAGE_SPEED * dt + 1e-7, home: null };
-    const onFoot = { required: !fullScenery || !!boundary && !warpExpected, frames: 0, bounded: true, maxStep: 0, maxRise: 0, violation: null,
+      target: null, targetClear: false, targetSupported: false, horizontal: 0, rise: 0, stepLimit: BL.clankers.RAGE_SPEED * dt + 1e-7, home: null,
+      visit: { required: BL.clankerRage.WARP_HOLD_TIME, frames: 0, held: true, below: true, ankleError: 0, anchorDrift: 0, root: null, rootDrift: 0 } };
+    const visitHand = new Float64Array(3), visitAnkle = new Float64Array(3);
+    const onFoot = { required: !fullScenery || !!boundary, frames: 0, bounded: true, noWarp: true, maxStep: 0, maxRise: 0, violation: null,
       targetRadius: Math.hypot(c.root.position.x, c.root.position.z), borderRadius: 18.5, warpRequired: H.rageWarpRequired(e, c),
       targetFeet: c.root.position.y - c.baseY, targetSurface: B.island.surfaceAt(c.root.position.x, c.root.position.z) };
     let lastAir = false, closestPalm = Infinity, closestPalmPoint = null, palmPassed = false, palmEncounter = null, palmExit = null;
@@ -9108,13 +9191,17 @@ scene("hub", { label: "gorilla rage throw", query: "status=chillin&gorillarage=1
     let contactFeetGap = null, closestContact = null, droppedAt = null, error = null;
     let end = null, alive = false, recoveries = 0;
     const updateCrew = B.crew.update, prepareDragged = B.crew.prepareDragged;
-    // The accepted capture and return can both occur inside one frame.
-    // Observe the existing capture lifecycle without changing its outcome.
+    // Observe the accepted capture before the visible pause and later home
+    // return, without changing the existing capture lifecycle.
     B.crew.prepareDragged = (...args) => {
       if (!captureEvent && args[0] === c && c.grabbedBy === e && e.capture.cave === c) {
         const p = e.root.position, q = c.root.position, feet = q.y - c.baseY + c.restLower;
         const floor = B.island.surfaceAt(q.x, q.z);
+        const foot = c.parts.legR, bounds = S.boundsOf(foot.geometry);
+        S.updateWorld(c.root, c.root.parent.world);
+        BL.math.mat4.transformPoint(visitAnkle, foot.world, bounds.center[0], bounds.min[1], bounds.center[2]);
         captureEvent = { frame, carrier: { ...p }, target: { x: q.x, feet, z: q.z, floor, radius: Math.hypot(q.x, q.z) },
+          ankle: Array.from(visitAnkle),
           ownership: B.pilot.player === c && B.crew.player === c && c.humanControlled,
           clear: B.island.clearAt(q.x, feet + 0.025, q.z, 0.3, c.bodyHeight) && solids.clearAt(q.x, feet + 0.025, q.z, 0.3, c.bodyHeight) };
       }
@@ -9169,7 +9256,7 @@ scene("hub", { label: "gorilla rage throw", query: "status=chillin&gorillarage=1
       for (; frame < Math.round(20 / dt); frame++) {
       const feetBefore = c.root.position.y - c.baseY, carrierBeforeY = e.root.position.y;
       const selectionX = e.root.position.x, selectionZ = e.root.position.z;
-      const wasReady = e.rage.edgeReady, previousRay = e.rage.edgeIndex, previousInset = e.rage.edgeInset;
+      const wasReady = e.rage.edgeReady, wasHomePending = e.rage.homePending, previousRay = e.rage.edgeIndex, previousInset = e.rage.edgeInset;
       B.advance(dt, dt);
       const r = e.rage, capture = e.capture, p = e.root.position, q = c.root.position;
       const holding = capture.cave === c && c.grabbedBy === e;
@@ -9184,7 +9271,7 @@ scene("hub", { label: "gorilla rage throw", query: "status=chillin&gorillarage=1
         mapSelection.regions &&= r.edgeLand === expectedLand && H.rageCaptureLandAt(r.edgeOriginX, r.edgeOriginY, r.edgeOriginZ) === expectedLand;
         if (r.edgeLand === 5) mapSelection.bridgeCentered &&= Math.abs(M.localX(r.goalX, r.goalZ)) < 1e-7;
         if (!wasReady || previousRay !== r.edgeIndex || previousInset !== r.edgeInset) {
-          const returnedNow = captureEvent?.frame === frame && !r.homePending
+          const returnedNow = captureEvent && wasHomePending && !r.homePending
             && Math.hypot(r.edgeOriginX - captureEvent.carrier.x, r.edgeOriginY - captureEvent.carrier.y, r.edgeOriginZ - captureEvent.carrier.z) > 1e-7;
           const from = returnedNow ? { x: r.edgeOriginX, y: r.edgeOriginY, z: r.edgeOriginZ }
             : { x: selectionX, y: carrierBeforeY, z: selectionZ };
@@ -9213,8 +9300,10 @@ scene("hub", { label: "gorilla rage throw", query: "status=chillin&gorillarage=1
         }
       }
       const air = e.jump.active || e.drive.airborne, rise = p.y - carrierBeforeY;
+      if (onFoot.required && !launched) onFoot.noWarp &&= !capture.warpVisit && !r.homePending;
       if (onFoot.required && !grabbed) {
-        // These ground and raised-prop targets are all inside the border.
+        // Ground targets remain ordinary pursuit on either side of the
+        // border; the raised-prop targets here are inside it.
         // Observe the capture frame too: a warp must not masquerade as a
         // successful ordinary approach, even when its endpoint is clear.
         const distance = Math.hypot(p.x - selectionX, p.z - selectionZ), limit = BL.clankers.RAGE_SPEED * dt + 1e-7;
@@ -9233,9 +9322,25 @@ scene("hub", { label: "gorilla rage throw", query: "status=chillin&gorillarage=1
         warp.targetClear = captureEvent.clear;
         warp.horizontal = Math.hypot(at.x - selectionX, at.z - selectionZ); warp.rise = at.y - carrierBeforeY;
       }
+      if (warpExpected && warp.observed && capture.warpVisit) {
+        const arm = e.gorilla.parts.armL, armBounds = S.boundsOf(arm.geometry), foot = c.parts.legR, footBounds = S.boundsOf(foot.geometry);
+        S.updateWorld(root);
+        BL.math.mat4.transformPoint(visitHand, arm.world, armBounds.center[0], armBounds.min[1] + .08, armBounds.center[2]);
+        BL.math.mat4.transformPoint(visitAnkle, foot.world, footBounds.center[0], footBounds.min[1], footBounds.center[2]);
+        const visit = warp.visit, anchor = captureEvent.ankle;
+        // The capture hook precedes the rig's alignment below the ankle.
+        // Measure later visible poses against the first rendered visit pose.
+        if (!visit.root) visit.root = { ...p };
+        const at = visit.root;
+        visit.frames++; visit.held &&= holding && r.grabHeld && r.throwHeld && e.motion.dragging && r.homePending && r.warpWaiting;
+        visit.below &&= p.y < warp.target.feet && p.y < visitAnkle[1];
+        visit.ankleError = Math.max(visit.ankleError, Math.hypot(visitHand[0] - visitAnkle[0], visitHand[1] - visitAnkle[1], visitHand[2] - visitAnkle[2]));
+        visit.anchorDrift = Math.max(visit.anchorDrift, Math.hypot(visitAnkle[0] - anchor[0], visitAnkle[1] - anchor[1], visitAnkle[2] - anchor[2]));
+        visit.rootDrift = Math.max(visit.rootDrift, Math.hypot(p.x - at.x, p.y - at.y, p.z - at.z));
+      }
       if (warpExpected && warp.observed && !warp.home && holding && !r.homePending) {
         const at = captureEvent.carrier;
-        warp.home = { frame, sameFrame: frame === captureEvent.frame, x: p.x, y: p.y, z: p.z,
+        warp.home = { frame, duration: (frame - captureEvent.frame) * dt, x: p.x, y: p.y, z: p.z, visitEnded: !capture.warpVisit,
           distance: Math.hypot(p.x - at.x, p.y - at.y, p.z - at.z),
           flat: [[0, 0], [1, 0], [-1, 0], [0, 1], [0, -1]].every(([dx, dz]) => B.island.surfaceAt(p.x + dx, p.z + dz) === 0)
             && Math.abs(p.y) < 0.025 && Math.abs(C.supportAt(e, p.x, p.z, p.y, 0.15, e.heading) - p.y) < 0.025,
@@ -9427,20 +9532,24 @@ scene("hub", { label: "gorilla rage throw", query: "status=chillin&gorillarage=1
       && (state.sceneScenery || state.raised || state.regional || state.warpExpected || state.dragDistance > 1.5) && state.maxCharge === 1 && state.launched && state.launch.charge === 1
       && Math.abs(state.launch.angle - 45) <= 1 && Math.abs(state.launch.speed - 18) < 1e-6
       && (!state.sceneScenery || state.launch.carrier.radius <= 14 + 1e-7 && state.launch.carrier.radius < state.pathMetrics.startRadius)
-      && (!state.onFoot.required || state.onFoot.frames > 0 && state.onFoot.bounded
-        && (state.boundary === "at" ? state.onFoot.targetRadius === state.onFoot.borderRadius : state.onFoot.targetRadius < state.onFoot.borderRadius))
+      && (!state.onFoot.required || state.onFoot.frames > 0 && state.onFoot.bounded && state.onFoot.noWarp && !state.onFoot.warpRequired
+        && (state.boundary === "outside" ? state.onFoot.targetRadius > state.onFoot.borderRadius
+          : state.boundary === "at" ? state.onFoot.targetRadius === state.onFoot.borderRadius : state.onFoot.targetRadius < state.onFoot.borderRadius))
       && (!state.palm || state.palmPassed)
       && (!state.warpExpected || state.controlledTarget.selected && state.controlledTarget.retained && state.controlledTarget.released && state.launch.ownership
+        && state.onFoot.warpRequired
         && state.warp.observed && state.warp.sameFrameCapture && state.warp.traversalCleared && state.warp.targetClear && state.warp.targetSupported
         && state.warp.horizontal > state.warp.stepLimit && state.warp.target.radius > state.onFoot.borderRadius
-        && state.warp.home && state.warp.home.sameFrame && state.warp.home.flat && state.warp.home.held && state.warp.home.clear
+        && state.warp.visit.frames * state.dt + 1e-7 >= state.warp.visit.required && state.warp.visit.held && state.warp.visit.below
+        && state.warp.visit.ankleError < 1e-4 && state.warp.visit.anchorDrift < 1e-4
+        && state.warp.home && state.warp.home.duration + 1e-7 >= state.warp.visit.required && state.warp.home.visitEnded
+        && state.warp.home.flat && state.warp.home.held && state.warp.home.clear
         && state.warp.home.ownership && state.warp.home.traversalCleared && state.warp.home.distance > 1.5
         && !state.jumps.airborneFrames && state.jumps.countUnchanged && state.launch.carrier.flatGround && state.launch.carrier.radius <= 14 + 1e-7)
-      && (!state.hill || state.jumps.captureFeet >= 2 && state.jumps.captureY > state.jumps.startY + 1.16)
+      && (!state.hill || state.jumps.captureFeet >= 2 && state.warp.targetSupported && state.warp.visit.below)
       && (!state.boundary || state.setup.selected.radius === state.onFoot.targetRadius && state.captureEvent.ownership
         && state.controlledTarget.selected && state.controlledTarget.retained && state.controlledTarget.released && state.launch.ownership
-        && state.onFoot.warpRequired === (state.boundary === "outside") && !state.jumps.airborneFrames && state.jumps.countUnchanged
-        && (state.boundary === "outside" ? state.onFoot.targetRadius > state.onFoot.borderRadius : !state.warp.observed))
+        && !state.onFoot.warpRequired && !state.warp.observed && !state.jumps.airborneFrames && state.jumps.countUnchanged)
       && (!state.raised || state.riderSetup.above > 0.6 && state.launch.carrier.raisedHeight > 0.7
         && Math.abs(state.launch.carrier.y - state.launch.carrier.support) < 0.15 && state.launch.bystander.distance < state.launch.bystander.overlapRadius
         && state.launch.bystander.above > 0.6)

@@ -6244,8 +6244,8 @@
       } finally { e.rageTraversal = false; }
     };
     const resetRageWarp = e => {
-      // Both endpoint hooks certify and commit the pair's destination.
       // Clear old movement without releasing the newly captured Ooga.
+      // The brief wall visit has no supporting floor; its return is checked.
       clearWallSearch(e); releasePortal(e); releaseLab(e);
       if (climbTurn === e.index) climbTurn = -1;
       if (labEscape === e) { e.stuck.escapeLeft = 0; labEscape = null; }
@@ -6272,12 +6272,16 @@
       e.speed = e.rest = e.pound = e.beat = e.stand = e.recover = e.blocked = e.retry = e.backoutLeft = 0;
       e.phase = "rage"; e.route = ""; e.entryTurn = e.exitFootprint = e.rageTraversal = false;
       e.footprintMode = "walk"; m.walkGait = "gallop"; m.walkPhase = NaN;
-      setGoal(e, p.x, p.y, p.z); syncLab(e);
+      syncLab(e);
       // Match the hub's settled destination and hull-preview pose passes.
       m.workExit = true;
-      e.gorilla.poseManaged(2, p.x, p.y, p.z, e.heading, 0, false, false, "", m);
-      e.gorilla.poseManaged(2, p.x, p.y, p.z, e.heading, 0, false, false, "", m);
+      if (e.capture?.warpVisit) ctx.rageWarpPose(e);
+      else {
+        e.gorilla.poseManaged(2, p.x, p.y, p.z, e.heading, 0, false, false, "", m);
+        e.gorilla.poseManaged(2, p.x, p.y, p.z, e.heading, 0, false, false, "", m);
+      }
       m.workExit = false;
+      setGoal(e, p.x, p.y, p.z);
       e.compact = e.gorilla.compact;
       e.radius = Math.max(WALK_RADIUS, e.gorilla.bodyRadius + 0.1);
       e.height = Math.max(WALK_HEIGHT, e.gorilla.bodyHeight + 0.04);

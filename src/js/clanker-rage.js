@@ -4,7 +4,7 @@
   "use strict";
   const BL = window.BL = window.BL || {};
   const HITS = 42, WINDOW = 60, DURATION = 60, SERIALS = 128, DEBUG_RANGE = 35;
-  const THROW_CHARGE_TIME = 1, EDGE_NEAR = 2.4;
+  const THROW_CHARGE_TIME = 1, WARP_HOLD_TIME = 0.4, EDGE_NEAR = 2.4;
   const GRIP_WAIT = 0.75, BACKOFF_TIME = 1.25, BACKOFF_DISTANCE = 2.5;
   const TARGET_HUNT_TIME = 8, TARGET_RETRY_TIME = 8;
   const GRID = 181, HALF = 90, STEP = 1.25, CELLS = GRID * GRID, ROUTE = 256;
@@ -457,7 +457,7 @@
           r.warpAt = now + 0.75; r.grabHeld = true;
           if (ctx.warpTarget(e, r.target)) {
             clearRoute(e); r.planAt = now; r.blocked = r.poseBlocked = 0; r.traversing = false;
-            contact(e, now);
+            contact(e, now, true);
           }
         }
       }
@@ -475,13 +475,13 @@
       r.traversing = traversing;
       return true;
     };
-    const contact = (e, time) => {
+    const contact = (e, time, warped = false) => {
       const r = e.rage;
       const held = r.target && ctx.captive(e) === r.target;
       if (!r.active || r.phase !== "hunt" || !r.grabHeld || !eligible(e)
         || !held && (ctx.suspended(e) || ctx.traversing?.(e) || !validTarget(e, r.target))) return false;
       now = time;
-      const home = !!ctx.warpHome && !!ctx.warpRequired?.(e, r.target);
+      const home = !!ctx.warpHome && (warped || !!ctx.warpRequired?.(e, r.target));
       if (!held && !ctx.grab(e, r.target)) {
         const p = e.root.position, q = r.target.root.position;
         const near = Math.hypot(q.x - p.x, q.z - p.z) <= (ctx.huntRange ? ctx.huntRange(e) : 2.6)
@@ -499,6 +499,9 @@
       r.poseRepair = false; r.poseRepairDistance = Infinity; r.edgeSettleUntil = 0;
       r.poseRejectHeading = NaN; r.poseRejectUntil = 0; resetApproach(r);
       r.homePending = r.warpWaiting = home;
+      // Show the ankle capture before returning together. The same gate
+      // then keeps a refused home endpoint on its bounded retry schedule.
+      if (home) r.warpAt = now + WARP_HOLD_TIME;
       r.throwHeld = true; r.throwCharge = 0; r.chargeAt = now; return true;
     };
     const poseResult = (e, dt, time, accepted) => {
@@ -687,5 +690,5 @@
     e.gorilla.setForm(active ? "code" : "ape");
     e.root.matrixNative = active;
   };
-  BL.clankerRage = { create, state, signedOut, effects, HITS, WINDOW, DURATION, DEBUG_RANGE, TARGET_HUNT_TIME };
+  BL.clankerRage = { create, state, signedOut, effects, HITS, WINDOW, DURATION, DEBUG_RANGE, TARGET_HUNT_TIME, WARP_HOLD_TIME };
 })();
