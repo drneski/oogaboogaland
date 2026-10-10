@@ -118,6 +118,31 @@ export const checkRegistry = async (gh, rock, entries) => {
 export const isBundle = (pr, bot) => bot && [bot, BOT].includes(pr.user.login) && pr.head.repo?.full_name === pr.base.repo.full_name
   && LANES.some((lane) => pr.head.ref.startsWith(branchPrefix(lane)));
 
+// Reserve queued identities for onboarding without executing their custom code.
+// Full merge validation stays separate: an untouched generated default on rock
+// may already conflict with a queued addition and need onboarding to remove it.
+export const queuedCharacters = async (gh, bot) => {
+  if (!/^[A-Za-z0-9-]+\[bot\]$/.test(bot || "")) throw new Error("Missing trusted character bot login");
+  const queued = [];
+  for (const listed of await gh.list("pulls?state=open&base=rock")) {
+    if (!isBundle(listed, bot)) continue;
+    const pr = await gh.api(`pulls/${listed.number}`);
+    if (pr.state !== "open") continue;
+    if (!isBundle(pr, bot) || pr.base.ref !== "rock") throw new Error("Untrusted bundle identity");
+    const lane = LANES.find((value) => pr.head.ref.startsWith(branchPrefix(value)));
+    const head = await gh.api(`commits/${pr.head.sha}`);
+    if (head.author?.login !== bot || !head.commit.verification?.verified) throw new Error("Bundle head is not a verified commit by the trusted automation");
+    const manifest = await gh.file(pr.head.sha, manifestPath(lane), 262144);
+    if (!manifest) throw new Error("Bundle provenance is missing");
+    for (const entry of readManifest(manifest.source, lane).entries) {
+      const file = await gh.file(pr.head.sha, entry.path);
+      if (!file || digest(file.source) !== entry.hash) throw new Error("Bundled file differs from the scanned source");
+      queued.push({ path: entry.path, base: entry.base, character: declaredIdentity(file.source) });
+    }
+  }
+  return queued;
+};
+
 export const reviewDecision = async (gh, pr) => {
   const latest = new Map();
   for (const review of await gh.list(`pulls/${pr.number}/reviews`)) {

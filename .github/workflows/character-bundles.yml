@@ -23,6 +23,8 @@ permissions:
 concurrency:
   group: character-bundles
   cancel-in-progress: false
+  # Shared with the Pages artifact writer; preserve pending artifact commits.
+  queue: max
 
 jobs:
   bundle:

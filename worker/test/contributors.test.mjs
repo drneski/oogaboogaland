@@ -4,11 +4,11 @@ import assert from "node:assert/strict";
 import { readdirSync, readFileSync } from "node:fs";
 import { runInNewContext } from "node:vm";
 import { contributorRows, createContributorLookup } from "../src/contributor-policy.js";
-import { missingCharacters, characterSource, retiredCharacters } from "../../scripts/sync-characters.mjs";
+import { missingCharacters, characterSource, retiredCharacters, queuedDefaults } from "../../scripts/sync-characters.mjs";
 import { checkCharacterIdentities, identityAdvice } from "../../scripts/contributor-pr.mjs";
 import { declaredIdentity, mayAuthorIdentity } from "../../scripts/character-identity.mjs";
 import { CharacterRejection, parseSafeCharacter, scanCharacter, safeCharacterSource, checkOwner } from "../../scripts/character-safety.mjs";
-import { digest, due, inspectSubmission, manifestPath, readManifest, reviewDecision } from "../../scripts/character-submissions.mjs";
+import { digest, due, inspectSubmission, manifestPath, readManifest, queuedCharacters, reviewDecision } from "../../scripts/character-submissions.mjs";
 import { createCoordinator } from "../../scripts/character-bundles.mjs";
 import { BOT, OPERATORS, isOperator } from "../../scripts/character-operators.mjs";
 
@@ -162,19 +162,19 @@ test("an otherwise validated overdue daily bundle never calls merge when conflic
 });
 
 test("the scanner checks earlier character revisions and extracts only character files from mixed PRs", async () => {
-  const path = "src/characters/owner.js", head = "a".repeat(40), old = "b".repeat(40), rock = "c".repeat(40);
+  const path = "src/characters/owner.js", head = "a".repeat(40), old = "b".repeat(40), rock = "c".repeat(40), base = "d".repeat(40);
   const source = characterSource({ handle: "owner", joined: 1, lastCommit: 2 });
-  let poisoned = true, author = "owner";
+  let poisoned = true, author = "owner", current = null;
   const gh = {
     list: async () => [{ sha: old }, { sha: head }],
     api: async (url) => {
       if (url === "pulls/7") return { number: 7, user: { login: "owner" }, base: { ref: "rock" }, head: { sha: head } };
       if (url.startsWith("collaborators/")) return { permission: "read" };
-      if (url.startsWith("compare/")) return { merge_base_commit: { sha: rock }, total_commits: 2, files: [{ filename: path, status: "added" }, { filename: "README.md", status: "modified" }] };
-      if (url.startsWith("commits/")) return { author: { login: author }, parents: [{ sha: rock }], files: [{ filename: path, status: "added" }] };
+      if (url.startsWith("compare/")) return { merge_base_commit: { sha: base }, total_commits: 2, files: [{ filename: path, status: "added" }, { filename: "README.md", status: "modified" }] };
+      if (url.startsWith("commits/")) return { author: { login: author }, parents: [{ sha: base }], files: [{ filename: path, status: "added" }] };
       throw new Error("Unexpected API call");
     },
-    file: async (ref) => ref === rock ? null : { source: ref === old && poisoned ? source + 'fetch("/api/me");' : source, sha: ref }
+    file: async (ref) => ref === base ? null : ref === rock ? current : { source: ref === old && poisoned ? source + 'fetch("/api/me");' : source, sha: ref }
   };
   await assert.rejects(inspectSubmission(gh, { pr: 7, head }, rock), CharacterRejection);
   poisoned = false;
@@ -182,8 +182,39 @@ test("the scanner checks earlier character revisions and extracts only character
   assert.equal(accepted.mixed, true);
   assert.deepEqual(accepted.entries.map((entry) => entry.path), [path]);
   assert.equal(accepted.entries[0].lane, "daily");
+  current = { source: characterSource({ handle: "owner", joined: 1, lastCommit: 3 }), sha: "e".repeat(40) };
+  await assert.rejects(inspectSubmission(gh, { pr: 7, head }, rock), /Character changed on rock/);
+  current = null;
   author = "attacker";
   await assert.rejects(inspectSubmission(gh, { pr: 7, head }, rock), CharacterRejection);
+});
+
+test("queued custom identities reserve defaults without executing source and require trusted provenance", async () => {
+  const repo = "example/land", bot = "private-app[bot]", head = "a".repeat(40), path = "src/characters/cave-name.js";
+  const source = 'throw new Error("Never execute me"); BL.characters.add({ handle: "cave-name", github: "owner", dress: { eyes(k, v) {} } });';
+  const entry = { pr: 7, head: "b".repeat(40), author: "owner", path, base: null, hash: digest(source), lane: "manual" };
+  const state = { version: 1, lane: "manual", openedOn: "2026-10-04", entries: [entry] };
+  const pr = { number: 8, state: "open", user: { login: bot }, head: { sha: head, ref: "automation/characters-manual-round", repo: { full_name: repo } },
+    base: { ref: "rock", repo: { full_name: repo } } };
+  let verified = true, savedSource = source;
+  const gh = { repo, list: async () => [pr, { ...pr, user: { login: "other" } }],
+    api: async (url) => {
+      if (url === "pulls/8") return pr;
+      if (url === `commits/${head}`) return { author: { login: bot }, commit: { verification: { verified } } };
+      throw new Error(`Unexpected API call ${url}`);
+    },
+    file: async (sha, filename) => {
+      assert.equal(sha, head);
+      if (filename === manifestPath("manual")) return { source: JSON.stringify(state) };
+      if (filename === path) return { source: savedSource };
+      throw new Error(`Unexpected queued file ${filename}`);
+    }
+  };
+  assert.deepEqual(await queuedCharacters(gh, bot), [{ path, base: null, character: { handle: "cave-name", github: "owner" } }]);
+  verified = false;
+  await assert.rejects(queuedCharacters(gh, bot));
+  verified = true; savedSource += "\n// changed after scanning\n";
+  await assert.rejects(queuedCharacters(gh, bot));
 });
 
 test("empty placeholders migrate to the scoped App without duplication, never merge empty, and reopen after merging", async () => {
@@ -300,12 +331,13 @@ test("onboarding rejects bot aliases, unresolved identities, malformed dates and
   assert.throws(() => contributorRows({ ...snapshot(), meta: { org: "elsewhere", schema_version: 3 } }, NOW));
 });
 
-test("a just-merged custom character and its GitHub alias prevent duplicate defaults", () => {
+test("queued and just-merged custom characters reserve their handles and GitHub aliases against defaults", () => {
   const existing = [{ handle: "cave-name", github: "GitHub-Owner", look: { bald: true } }, { handle: "Another" }];
-  const rows = contributorRows(snapshot(person("github-owner"), person("CAVE-NAME"), person("another"), person("new-ooga")), NOW);
-  const missing = missingCharacters(rows, existing);
+  const pending = [{ path: "src/characters/queued-alias.js", base: null, character: { handle: "Queued-Alias", github: "Waiting-Owner" } }];
+  const rows = contributorRows(snapshot(person("github-owner"), person("CAVE-NAME"), person("another"), person("queued-alias"), person("waiting-owner"), person("new-ooga")), NOW);
+  const missing = missingCharacters(rows, existing, pending);
   assert.deepEqual(missing.map((row) => row.handle), ["new-ooga"]);
-  assert.equal(missingCharacters(rows, [...existing, ...missing]).length, 0);
+  assert.equal(missingCharacters(rows, [...existing, ...missing], pending).length, 0);
   const collected = [];
   runInNewContext(characterSource(missing[0]), { window: { BL: { characters: { add: (row) => collected.push(row) } } } });
   assert.equal(collected[0].handle, "new-ooga");
@@ -317,6 +349,26 @@ test("a just-merged custom character and its GitHub alias prevent duplicate defa
   assert.deepEqual(retiredCharacters([alias, owner], sourceFor), [{ file: "harry.js", source }]);
   assert.deepEqual(retiredCharacters([alias], sourceFor), []);
   assert.deepEqual(retiredCharacters([alias, owner], () => source + "// Custom profile\n"), []);
+});
+
+test("queued additions retire only exact untouched generated defaults for their reserved identities", () => {
+  const source = characterSource({ handle: "new-ooga", joined: 1, lastCommit: 2 });
+  const entry = { path: "src/characters/new-ooga.js", base: null, character: { handle: "NEW-OOGA", github: "New-Ooga" } };
+  const sourceFor = (file) => file === "new-ooga.js" ? source : null;
+  assert.deepEqual(queuedDefaults([entry], sourceFor), [{ file: "new-ooga.js", source }]);
+  for (const other of [
+    { ...entry, base: "a".repeat(40) },
+    { ...entry, character: { handle: "another", github: "another-owner" } }
+  ]) assert.deepEqual(queuedDefaults([other], sourceFor), []);
+  // Intake can reserve an alias after a build generated its owner's default.
+  const alias = { ...entry, path: "src/characters/cave-name.js", character: { handle: "cave-name", github: "new-ooga" } };
+  assert.deepEqual(queuedDefaults([alias, entry], sourceFor), [{ file: "new-ooga.js", source }]);
+  assert.deepEqual(queuedDefaults([{ ...alias, base: "a".repeat(40) }], sourceFor), []);
+  assert.deepEqual(queuedDefaults([entry], (file) => file === "new-ooga.js" ? characterSource({ handle: "another", joined: 1, lastCommit: 2 }) : null), []);
+  for (const custom of [null, "not a character", source + "// Custom profile\n",
+    source.replace("lastCommit: 2", 'lastCommit: 2, look: { skin: "#123456" }')]) {
+    assert.deepEqual(queuedDefaults([entry], () => custom), []);
+  }
 });
 
 test("a single aliased profile gains github; explicit mappings and ambiguous batches are preserved", () => {

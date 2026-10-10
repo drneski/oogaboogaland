@@ -109,6 +109,22 @@ When unrelated changes advance `rock`, the coordinator updates the bundle branch
 GitHub's expected-head update API and waits for fresh checks. A manual bundle's
 new head also requires a new approval.
 
+Contributor onboarding reserves the handles and GitHub aliases in open bundles
+before generating defaults. It reads signed bot heads and checks manifest hashes
+as text; it never executes queued character code. The artifact writer rechecks
+these reservations while sharing the coordinator's concurrency group, with
+pending runs queued so intake events cannot cancel an artifact commit.
+
+If onboarding already created a default for a queued addition's handle or GitHub
+owner, reconciliation removes it only when it is byte-for-byte unchanged generator
+output at its generated filename and the queued entry records no original base
+file (`base: null`). This restores the absent base and unique identity expected by
+the submission. Customizations and
+ordinary edits to existing profiles are preserved and still fail on a changed
+base. After this fix merges, the Pages reconciliation and artifact job remove
+such collisions; the next bundle sweep can validate and update the branch again.
+Manual character code still needs a fresh approval after that update.
+
 The coordinator and artifact writer use short-lived installation tokens from a
 private GitHub App installed only on OBL. Its private key lives in the repository
 Actions secret `CHARACTER_APP_PRIVATE_KEY`; no personal access token is stored.
@@ -152,7 +168,8 @@ Setup uses an owner-approved GitHub App registration and GitHub CLI/API:
 2. Save its private key as `CHARACTER_APP_PRIVATE_KEY`; set repository variables
    `CHARACTER_APP_CLIENT_ID` and `CHARACTER_BOT_LOGIN` (`<app-slug>[bot]`). The
    coordinator requests only its needed permissions; the separate artifact job
-   requests only Contents and Commit statuses write. Neither imports PR code.
+   requests Contents and Commit statuses write plus Pull requests read to recheck
+   queued identities. Neither imports PR code.
 3. Protect `rock`: require PRs, an up-to-date base, and **Character identity ownership**,
    **Character intake**, **Character bundle safety**. Bind intake and safety to
    the installed App. Identity is emitted by the read-only Actions checker for

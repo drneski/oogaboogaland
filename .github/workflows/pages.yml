@@ -72,9 +72,16 @@ jobs:
     needs: [deploy]
     runs-on: ubuntu-latest
     timeout-minutes: 10
+    # Recheck queued identities while bundle mutations are excluded. Keep every
+    # pending writer so a later intake event cannot cancel its artifact commit.
+    concurrency:
+      group: character-bundles
+      cancel-in-progress: false
+      queue: max
     permissions:
       contents: write
       statuses: write
+      pull-requests: read
     steps:
       - name: Repository-scoped artifact writer token
         if: vars.CHARACTER_APP_CLIENT_ID != ''
@@ -85,6 +92,7 @@ jobs:
           private-key: ${{ secrets.CHARACTER_APP_PRIVATE_KEY }}
           permission-contents: write
           permission-statuses: write
+          permission-pull-requests: read
       - uses: actions/checkout@v6
         with:
           ref: ${{ github.sha }}
@@ -119,3 +127,5 @@ jobs:
           git push origin --delete "$artifact_branch"
         env:
           GH_TOKEN: ${{ steps.app.outputs.token || github.token }}
+          GITHUB_TOKEN: ${{ steps.app.outputs.token || github.token }}
+          CHARACTER_BOT_LOGIN: ${{ vars.CHARACTER_BOT_LOGIN || 'github-actions[bot]' }}

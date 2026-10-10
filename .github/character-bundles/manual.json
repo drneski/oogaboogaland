@@ -2,15 +2,24 @@
   "version": 1,
   "lane": "manual",
   "openedOn": "2026-10-08",
-  "round": "4ee83493b849a22069ae4ffa2536689acdb2548c",
+  "round": "54573fc9687811278e451d116f73762d8d98b838",
   "entries": [
     {
-      "pr": 183,
-      "head": "89a3e58ab5e4c73509ece12252ad0891e4d81aec",
-      "author": "nickdagreek1",
-      "path": "src/characters/NickDaGreek.js",
+      "pr": 185,
+      "head": "ac29ff9bc7cb264fc98db5a6f19aaf770e02f306",
+      "author": "hotpixelgroup",
+      "path": "src/characters/hotpixelgroup.js",
+      "base": "3b50564ba59f433e7e8142dc0ac66aa87ad24a2a",
+      "hash": "d91e740f3fb27a9d5e3bff524457285326841b48dfa298cd8eb62d307fccd4fe",
+      "lane": "manual"
+    },
+    {
+      "pr": 190,
+      "head": "781cfd99d6060d7da25aa0283ab329706861f6f4",
+      "author": "l0n0",
+      "path": "src/characters/l0n0.js",
       "base": null,
-      "hash": "2b1c88db419612fcf909a2215097acdf36e880291fa953f2d6ed8a0cb928344a",
+      "hash": "33972940a39d4b97d95cf6cc596c250e81b50b7188ee65b7e43e30c9c5b7326d",
       "lane": "manual"
     }
   ]
