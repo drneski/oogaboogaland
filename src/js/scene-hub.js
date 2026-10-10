@@ -3954,8 +3954,11 @@
       rec.blocked = "warp-center";
       if (!clankerCenterClear(entry, spot.x, spot.y, spot.z, spot.x, spot.y, spot.z, false, facing, facing)) return false;
       rec.blocked = "warp-rig";
+      // Live carrying never hull-tests the gorilla's own planted limbs: a
+      // supporting knuckle rests a little inside flat ground. Keep the
+      // per-vertex terrain test, the limb sweeps and the captive's grip.
       const clear = entry.gorilla.climbPoseClear(2, spot.x, spot.y, spot.z, facing, RAGE_WARP_MOTION,
-        clankerWalkSolidAt, rageWarpTransitionClear, entry, 0, true, "", "", 0, island.hullClearAt);
+        clankerWalkSolidAt, rageWarpTransitionClear, entry, 0, true, "", "");
       if (!clear) { if (!rec.blocked) rec.blocked = "warp-rig"; return false; }
       if (!rageWarpGripChecked || !rageWarpGripClear) { rec.blocked = "warp-grip"; return false; }
       rec.blocked = "";
@@ -4167,11 +4170,12 @@
   };
   const rageDragClear = (entry, x, y, z, toX, toY, toZ, heading = entry.heading, fromHeading = entry.heading) => {
     const rec = entry.capture, cave = rec?.cave;
-    if (!cave || !rec.autonomous) return true;
-    // A local sidestep must not undo the dry route chosen around the lake.
-    // Swimming has its own controller and releases a held Ooga.
-    if (mempoolIsland.afloat(toX, toZ, toY, GORILLA_DRAUGHT)
+    // A local sidestep must not undo the dry route chosen around the lake,
+    // and a hunt must not wade in: swimming suspends rage movement and
+    // releases a held Ooga, which would leave the gorilla floating idle.
+    if (entry.rage?.active && !entry.controlled && mempoolIsland.afloat(toX, toZ, toY, GORILLA_DRAUGHT)
       && !mempoolIsland.afloat(x, z, y, GORILLA_DRAUGHT)) return false;
+    if (!cave || !rec.autonomous) return true;
     if (rec.posed && !rec.throwing && !entry.drive.airborne && !entry.jump.active && !entry.climb.active && !entry.rageTraversal)
       return rageCarryClear(entry, x, y, z, toX, toY, toZ, fromHeading, heading);
     const turn = Math.atan2(Math.sin(heading - fromHeading), Math.cos(heading - fromHeading));
@@ -9507,7 +9511,8 @@
       || r.edgeLand === 1 && Math.hypot(x, z) > RAGE_HOME_RADII[0] + 1e-7
       || rageCaptureLandAt(x, y, z) !== r.edgeLand) return false;
     const sx = r.edgeDx, sz = r.edgeDz;
-    if (r.edgeLand !== 5 && (r.edgeX - x) * sx + (r.edgeZ - z) * sz < 3) return false;
+    // A mapped pad's flight was proven by the bake, even 1.8 m from the coast.
+    if (!rageMappedLand(r.edgeLand) && (r.edgeX - x) * sx + (r.edgeZ - z) * sz < 3) return false;
     const angle = Math.atan2(sx, sz);
     if (Math.abs(clankerSupportAt(entry, x, z, y, 0.15, angle) - y) > 0.15) return false;
     if (!rageDragClear(entry, x, y, z, x, y, z, angle, fromHeading)

@@ -6381,9 +6381,10 @@
       if (ctx.fireContact && ctx.fireContact(e, p.x, p.y, p.z)) ignite(e);
       updateFire(e, dt);
       if (rage && e.rage.active && e.fire.burning) rage.check(e, elapsed);
-      if (rage && e.rage.active && e.rage.warpWaiting) {
+      if (rage && e.rage.active && e.rage.warpWaiting && !e.climb.active && !e.jump.active && !e.drive.airborne) {
         // Failed endpoint admission keeps the last coherent pose in place.
-        // In particular, do not resume an old climb or jump toward the rim.
+        // A jump or fall already under way finishes first; check() has
+        // released any climb into that same checked fall.
         e.speed = 0; return;
       }
       if (e.climb.active) {

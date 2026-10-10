@@ -450,7 +450,9 @@
       if (r.phase === "hunt" && !ctx.captive(e) && chooseTarget(e)) {
         const required = !!ctx.warpRequired?.(e, r.target);
         r.warpWaiting = required;
-        if (required) { clearRoute(e); r.grabHeld = true; }
+        // Border targets have no climbing route: release a climb into the
+        // checked fall rather than hold the gorilla on the wall.
+        if (required) { clearRoute(e); r.grabHeld = true; if (ctx.retarget) ctx.retarget(e); }
         if (ctx.warpTarget && (!ctx.warpRequired || required) && now >= r.warpAt) {
           r.warpAt = now + 0.75; r.grabHeld = true;
           if (ctx.warpTarget(e, r.target)) {
@@ -684,7 +686,6 @@
     const active = e.rage.active && e.active;
     e.gorilla.setForm(active ? "code" : "ape");
     e.root.matrixNative = active;
-    e.root.matrixHighlight = false;
   };
   BL.clankerRage = { create, state, signedOut, effects, HITS, WINDOW, DURATION, DEBUG_RANGE, TARGET_HUNT_TIME };
 })();

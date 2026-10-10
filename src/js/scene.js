@@ -94,8 +94,6 @@
     while (node) {
       // 5: drawn in its own palette inside the Matrix (the Agent)
       if (node.matrixNative) return 5;
-      // 2.25 puts the mirror cave's moving glyph pattern on this body alone.
-      if (node.matrixHighlight) return 2.25;
       if (node.matrixLiving) return 2;
       if (node.matrixCloud) return 4;
       if (node.matrixEmissiveLiving || node.matrixSignLiving) partial = 3;

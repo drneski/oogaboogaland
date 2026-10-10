@@ -423,7 +423,7 @@ float matrixPixelCoverage(vec2 p, vec2 halfSize, vec2 footprint) {
   vec2 covered = max(hi - lo, vec2(0.0)) / footprint;
   return covered.x * covered.y;
 }
-float matrixGlyphAt(vec3 n, float flow, float density, out float glow, out float tip, out float palette, out float sideMix, out float sideShade) {
+float matrixGlyphAt(vec3 n, float flow, out float glow, out float tip, out float palette, out float sideMix, out float sideShade) {
   const float streamPitch = 0.12;
   const float glyphGap = 0.13;
   const float pixelPitch = 0.021;
@@ -475,7 +475,7 @@ float matrixGlyphAt(vec3 n, float flow, float density, out float glow, out float
   int rank = int(floor(matrixHash(stream + 7) * 8.0));
   glow = tip = palette = sideMix = 0.0;
   sideShade = 1.0;
-  if (float(rank) >= density * 8.0) return 0.0;
+  if (float(rank) >= uMatrixParams.w * 8.0) return 0.0;
   float streamSeed = matrixHash(stream);
   float speed = 0.56 + matrixHash(stream + 19) * 0.64;
   int trainLength = 7 + int(floor(streamSeed * 6.0));
@@ -798,8 +798,7 @@ void main() {
   // Mode 5 keeps its own palette in the Matrix; clouds are mode 4.
   float nativeMode = step(4.5, vParams.z);
   float cloud = step(3.5, vParams.z) * (1.0 - nativeMode);
-  float localLiving = step(2.125, vParams.z) * (1.0 - step(2.5, vParams.z));
-  float wholeLiving = step(1.5, vParams.z) * (1.0 - step(2.5, vParams.z)) * (1.0 - localLiving);
+  float wholeLiving = step(1.5, vParams.z) * (1.0 - step(2.5, vParams.z));
   float emissiveLiving = step(2.5, vParams.z) * (1.0 - cloud) * (1.0 - nativeMode) * step(0.001, vColor.a);
   float living = max(wholeLiving, emissiveLiving);
   float caveIndex = max(vMatrixCave, uMatrixCave);
@@ -834,7 +833,6 @@ void main() {
   float permanentFootprint = 0.5 * (abs(dFdx(permanentDepth)) + abs(dFdy(permanentDepth)));
   if (living < 0.5 && uMatrixGlyph < 0.5 && permanentDepth < permanentFootprint + 0.000001) permanent = 0.0;
   float front = max(permanent, mix(1.0, uMatrixLivingGlobal, living) * uMatrixParams.x * (1.0 - smoothstep(uMatrixParams.y - 1.5, uMatrixParams.y, flow))) * (1.0 - nativeMode);
-  front = max(front, localLiving);
   if (uMatrixGlyph > 2.5) {
     if (front <= 0.0) discard;
     float fog = smoothstep(uFogRange.x, uFogRange.y, distance(vWorld, uEye));
@@ -877,7 +875,7 @@ void main() {
       matrixBloom = 0.0;
     } else {
       float glow, tip, palette, sideMix, sideShade;
-      float glyph = matrixGlyphAt(n, flow, max(uMatrixParams.w, localLiving * 0.85), glow, tip, palette, sideMix, sideShade);
+      float glyph = matrixGlyphAt(n, flow, glow, tip, palette, sideMix, sideShade);
       vec3 glyphBase = mix(vec3(24.0, 220.0, 74.0), vec3(70.0, 255.0, 112.0), palette) / 255.0;
       matrixGreen = matrixGlyphColor(glyphBase, glow, tip, 0.0, sideShade);
       matrixSide = matrixGlyphColor(glyphBase, glow, tip, 1.0, sideShade);

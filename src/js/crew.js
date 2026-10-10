@@ -15,6 +15,9 @@
   const AMMO_MAX = 30, AMMO_PER_BANANA = 3, RELOAD_PERIOD = 1.2, BURST_ROUNDS = 3, BURST_STEP = 0.09, SHOT_PERIOD = 0.44;
   const FOCUSED_AUTO_HOLD = 0.12;
   const SHOT_POWER = 0.5, HEADSHOT_MULTIPLIER = 2.5;
+  // A shot cut short at a gorilla still reaches this far past it on its last
+  // step, so a body that bobbed or turned during the flight takes the hit.
+  const SHOT_SURFACE_REACH = 0.5;
   const GUN_MUZZLE_Y = -0.01, GUN_MUZZLE_Z = 0.67;
   const GUN_SIGHT_DOWN = Math.atan2(0.09 - 0.08, 0.59 + 0.18);
   const GUN_SIGHT_DROP = 0.08 * Math.cos(GUN_SIGHT_DOWN) + 0.18 * Math.sin(GUN_SIGHT_DOWN);
@@ -1516,7 +1519,7 @@
     const bulletPool = Array.from({ length: Math.max(32, workBodyTarget ? crewList.length * BURST_ROUNDS : 0) }, () => {
       const node = createNode({ geometry: models.bananaGeometry(), scale: { x: models.BANANA_AMMO_SCALE, y: models.BANANA_AMMO_SCALE, z: models.BANANA_AMMO_SCALE }, visible: false, matrixLiving: !!ctx.matrixLivingPile });
       addChild(root, node);
-      return { node, serial: 0, life: 0, duration: .22, arc: 0, tomato: false, source: null, feedback: false, workShot: false, visual: false, site: -1, aimSample: 0, from: { x: 0, y: 0, z: 0 }, to: { x: 0, y: 0, z: 0 } };
+      return { node, serial: 0, life: 0, duration: .22, arc: 0, reach: 0, tomato: false, source: null, feedback: false, workShot: false, visual: false, site: -1, aimSample: 0, from: { x: 0, y: 0, z: 0 }, to: { x: 0, y: 0, z: 0 } };
     });
     let bulletIdx = 0, bulletSerial = 0, tomatoesThrown = 0, throwCooldown = 0, tomatoGeometry = null;
     const clearProjectiles = () => { for (const b of bulletPool) { b.life=0; b.node.visible=false; b.source=null; } throwCooldown=0; };
@@ -1561,6 +1564,7 @@
       }
       // A phase doorway consumes the round before scenery or workers behind it.
       if (ctx.clipProjectileTarget && ctx.clipProjectileTarget(from, to)) surfaceHit = false;
+      bullet.reach = surfaceHit && weaponHit.owner.kind === "clanker" ? SHOT_SURFACE_REACH : 0;
       if (!surfaceHit && shotClear && !shotClear(from.x, from.y, from.z, to.x, to.y, to.z)) {
         bullet.workShot = false;
         let lo = 0, hi = 1;
@@ -1629,7 +1633,7 @@
         if (!absorbed && !bullet.feedback && !bullet.workShot && !bullet.tomato && input.weaponTargets
           && (bullet.source === player || BL.net && BL.net.state.resolved && !BL.net.state.me)) {
           dx = p.x - x; dy = p.y - y; dz = p.z - z; distance = Math.hypot(dx, dy, dz);
-          if (distance > 1e-6 && input.weaponTargets.ray(weaponHit, x, y, z, dx / distance, dy / distance, dz / distance, distance + 1e-5, bullet.source)) {
+          if (distance > 1e-6 && input.weaponTargets.ray(weaponHit, x, y, z, dx / distance, dy / distance, dz / distance, distance + (bullet.life ? 0 : bullet.reach) + 1e-5, bullet.source)) {
             setVec(weaponStart, x, y, z);
             if (weaponContactClear(weaponStart, weaponHit)) {
               bullet.feedback = true;
@@ -4672,6 +4676,9 @@
       const jetSteering = leap.thrown && flying && len > 0.05;
       if (len > 0.05) {
         if (jetSteering) {
+          // A steered flight is the visitor's again: Oogas, short props and
+          // decor block it as they do any other flight.
+          leap.rageThrown = false;
           // Counter-thrust steers the actual throw velocity, not a second
           // displacement that an outward throw can permanently overpower.
           const speed = Math.min(1, len) * JET_SPEED, vx = leap.vx, vz = leap.vz;

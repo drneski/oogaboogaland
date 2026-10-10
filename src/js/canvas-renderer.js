@@ -75,7 +75,7 @@
     }
     const acquire = (vertices = 16) => {
       if (poolUsed === pool.length) {
-        pool.push({ pts: new Float32Array(32), n: 0, depth: 0, style: "", coreStyle: "", line: false, lineGlow: 0, smokeOpacity: 1, mirror: false, mirrorNode: null, imageNode: null, mirrorMinX: 0, mirrorMaxX: 0, mirrorMinY: 0, mirrorMaxY: 0, portal: false, matrix: 0, matrixGlyph: false, matrixGlyphOpacity: 1, matrixWall: 0, matrixNx: 0, matrixNy: 0, matrixNz: 0, matrixPlane: 0, matrixCenterDepth: 0, matrixMinX: 0, matrixMaxX: 0, matrixMinY: 0, matrixMaxY: 0, matrixRed: 0, matrixGreen: 0, matrixBlue: 0, matrixCave: 0, matrixLocal: false, matrixLiving: false, matrixHighlight: false, matrixDynamic: false, matrixPermanentOnly: false, matrixPartial: false, matrixBacking: false, matrixFaceNx: 0, matrixFaceNy: 0, matrixFaceNz: 0, matrixFacePlane: 0 });
+        pool.push({ pts: new Float32Array(32), n: 0, depth: 0, style: "", coreStyle: "", line: false, lineGlow: 0, smokeOpacity: 1, mirror: false, mirrorNode: null, imageNode: null, mirrorMinX: 0, mirrorMaxX: 0, mirrorMinY: 0, mirrorMaxY: 0, portal: false, matrix: 0, matrixGlyph: false, matrixGlyphOpacity: 1, matrixWall: 0, matrixNx: 0, matrixNy: 0, matrixNz: 0, matrixPlane: 0, matrixCenterDepth: 0, matrixMinX: 0, matrixMaxX: 0, matrixMinY: 0, matrixMaxY: 0, matrixRed: 0, matrixGreen: 0, matrixBlue: 0, matrixCave: 0, matrixLocal: false, matrixLiving: false, matrixDynamic: false, matrixPermanentOnly: false, matrixPartial: false, matrixBacking: false, matrixFaceNx: 0, matrixFaceNy: 0, matrixFaceNz: 0, matrixFacePlane: 0 });
       }
       const rec = pool[poolUsed++];
       if (rec.pts.length < vertices * 2) rec.pts = new Float32Array(CLIP_VERTICES * 2);
@@ -505,8 +505,7 @@
           // Mode 5 keeps its own palette in the Matrix; clouds are mode 4.
           const matrixNative = matrixMode > 4.5;
           const matrixCloud = matrixMode > 3.5 && !matrixNative;
-          const localLiving = matrixMode > 2.125 && matrixMode < 2.5;
-          const matrixLiving = matrixMode > 1.5 && matrixMode < 3.5 && !localLiving && (matrixMode < 2.5 || face.emissive > 0);
+          const matrixLiving = matrixMode > 1.5 && matrixMode < 3.5 && (matrixMode < 2.5 || face.emissive > 0);
           const permanentFallback = !matrixLiving && !!face.matrixPermanentFallback && !!matrixPermanentCave;
           const flow = matrixLiving || permanentFallback ? Math.hypot(centerX - matrixOriginX, centerZ - matrixOriginZ) : 0;
           const staticCave = face.matrixCave || node.geometry.matrixCave || 0;
@@ -540,7 +539,7 @@
           const revealBacking = !!node.geometry.matrixRevealBacking;
           const ownedGlyph = localMatrixGlyph && cave && matrixCaves;
           const reachedGlyph = localMatrixGlyph && node.matrixFullCave && node.matrixFullCave === cave;
-          let minimumFront = localLiving || permanent || reachedGlyph || localMatrixGlyph && !ownedGlyph ? 1 : 0, maximumFront = permanentPossible ? 1 : minimumFront;
+          let minimumFront = permanent || reachedGlyph || localMatrixGlyph && !ownedGlyph ? 1 : 0, maximumFront = permanentPossible ? 1 : minimumFront;
           if (!matrixNative && !permanent && !reachedGlyph && matrixActive && (!matrixLiving || matrixLivingGlobal) && (!localMatrixGlyph || ownedGlyph)) {
             let radiusSquared = 0;
             for (let k = 0; k < count; k++) radiusSquared = Math.max(radiusSquared, (V[k][0] - centerX) ** 2 + (V[k][2] - centerZ) ** 2);
@@ -702,7 +701,6 @@
               if (node.mirrorShard && !shardDrawn) { mirrorDebug.shardsDrawn++; shardDrawn = true; }
               const emissive = Math.max((face.emissive || 0) * materialGlow, ember * 0.9);
               rec.matrixLiving = matrixLiving;
-              rec.matrixHighlight = localLiving;
               let k, glyphDistance = 0;
               if (localMatrixGlyph) {
                 const side = 1 - smooth((Math.abs(nx * w[8] + ny * w[9] + nz * w[10]) / glyphLength - 0.45) / 0.45);
@@ -990,7 +988,7 @@
           + Math.abs(matrixPermanentPlane[0] * dyx + matrixPermanentPlane[1] * dyy + matrixPermanentPlane[2] * dyz));
         permanent = depth >= footprint + 0.000001;
       }
-      const front = rec.matrixHighlight || permanent ? 1 : rec.matrixLiving && !matrixLivingGlobal ? 0 : rec.matrixPartial ? matrixFront(rec.matrixLiving && !cave ? Math.min(frontTravel, 36) : frontTravel) : matrixActive;
+      const front = permanent ? 1 : rec.matrixLiving && !matrixLivingGlobal ? 0 : rec.matrixPartial ? matrixFront(rec.matrixLiving && !cave ? Math.min(frontTravel, 36) : frontTravel) : matrixActive;
       if (front <= 0) return;
       const vx = eye.x - x, vy = eye.y - y, vz = eye.z - z, distance = Math.hypot(vx, vy, vz);
       const fog = smooth((distance - fogNear) / (fogFar - fogNear));
@@ -1025,7 +1023,7 @@
         travel = flow;
       }
       const offset = (stream + 2048) * 6;
-      if (offset < 0 || offset >= matrixStreams.length || matrixStreams[offset] >= Math.max(matrixDensity, rec.matrixHighlight ? 0.85 : 0) * 8) return;
+      if (offset < 0 || offset >= matrixStreams.length || matrixStreams[offset] >= matrixDensity * 8) return;
       const moving = (travel - matrixTime * matrixStreams[offset + 1] - matrixStreams[offset + 4]) / 0.13;
       const cell = Math.floor(moving), localY = (moving - cell - 0.5) * 0.13;
       const halfX = Math.max(0.000001, (Math.abs(ax * dxx + az * dxz) + Math.abs(ax * dyx + az * dyz)) * matrixSampleStep * 0.5);
@@ -1764,7 +1762,7 @@
             drawImageSurface(rec.imageNode); rec.imageNode = null;
             ctx.globalAlpha = 1;
           }
-          if (rec.matrix && (matrixDensity > 0 || rec.matrixHighlight || rec.matrixPartial) && !rec.mirrorNode?.mirrorRippleOnly) {
+          if (rec.matrix && (matrixDensity > 0 || rec.matrixPartial) && !rec.mirrorNode?.mirrorRippleOnly) {
             ctx.globalAlpha = rec.smokeOpacity;
             drawMatrix(rec);
             ctx.globalAlpha = 1;
